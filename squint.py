@@ -10,7 +10,7 @@ import configparser
 import code
 import copy
 
-import socialite.comms
+import butterfly.comms
 import toolbelt
 
 color_dark  = curses.COLOR_BLACK;
