@@ -1,37 +1,25 @@
 #!/usr/bin/python
-import curses, curses.textpad
+
 import sys
 import signal
 import locale
 import time
 import math
-import mysql.connector
-import configparser
 import code
 import copy
 
-import butterfly.comms
+import curses
+import curses.textpad
+import curses.panel
+import configparser
+import mysql.connector
+
+import squirrel.squid
 import toolbelt
 
-color_dark  = curses.COLOR_BLACK;
-color_med   = curses.COLOR_RED;
-color_light = curses.COLOR_YELLOW;
-color_odd   = curses.COLOR_MAGENTA;
 
-reload(sys)
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-
-
-def command():
-    cmdpad = curses.textpad.Textbox(linewin);
-    x = cmdpad.edit(validate);
-    for i in range(0, len(x)):
-      cmdpad.do_command(curses.KEY_BACKSPACE);
-    return x
-
-
+def validate(str):
+    return str;
 
 def terminal_size():
     import fcntl, termios, struct
@@ -41,855 +29,751 @@ def terminal_size():
     return w, h
 
 
-
-def validate(str):
-    return str;
-
-
-def up(k):
-    #simpleaudio.playaudio("/home/dominic/move.wav");
-    return (k == curses.KEY_UP or k == ord('k'));
-
-
-def down(k):
-    #simpleaudio.playaudio("/home/dominic/move.wav");
-    return (k == curses.KEY_DOWN or k == ord('j'));
-
-
-def left(k):
-    #simpleaudio.playaudio("/home/dominic/move.wav");
-    return (k == curses.KEY_LEFT or k == ord('h'));
-
-
-def right(k):
-    #simpleaudio.playaudio("/home/dominic/move.wav");
-    return (k == curses.KEY_RIGHT or k == ord('l'));
-
-def debug(str):
-    cmdwin.addstr(1, 4, str, curses.color_pair(2));
-
-
-################################################################################
-# For dealing with MySQL objects
-################################################################################
-class MySQLObj:
-
-
-  data = {};
-  types = None;
-  table = "";
-  temp = False;
-  window = None;
-  config = None;
-  isel = 0;
-  db = None;
-
-
-  # FIXME
-  def __init__(self, config, table):
-
-    self.config = config;
-    self.table = table;
-
-    # Get the field types
-    cursor = self.connect()
-    sql = "describe "+table
-    cursor.execute(sql);
-    types = cursor.fetchall();
-    self.types = {}
-    for i in range(0, len(types)):
-        self.types[types[i]["Field"]] = (types[i]["Type"],);
-    
-    # Get primary key information
-    infodb = mysql.connector.connect(
-          user=self.config['main']['user'],
-          password=self.config['main']['password'],
-          host=self.config['main']['host'],
-          database='information_schema'
-    );
-    cursor = infodb.cursor(dictionary=True)
-    cursor.execute("select column_name,referenced_table_name,referenced_column_name from key_column_usage where table_name='%s'" % self.table);
-    results = cursor.fetchall();
-    for result in results:
-        (t,) = self.types[ result["column_name"] ]
-        self.types[ result["column_name"] ] = (t, (result['referenced_table_name'], result['referenced_column_name']))
-
-    #code.interact(local=locals());
-    self.close();
-
-
-
-
-  def connect(self):
-      self.db = mysql.connector.connect(
-          user=self.config['main']['user'],
-          password=self.config['main']['password'],
-          host=self.config['main']['host'],
-          database=self.config['main']['database']
-      );
-      return self.db.cursor(dictionary=True)
-
-
-
-  def clear(self):
-      for key in self.data:
-          self.data[key] = "";
-      return;
-
-
-  def close(self):
-      self.db.commit();
-      self.db.close();
-
-
-  def insert(self):
-      cursor = self.connect();
-      objid = self.data.pop('id', None);
-      sql = 'insert into '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in self.data))
-      with open('cmd.sql', 'w') as fd: fd.write(sql);
-      cursor.execute(sql, self.data.values());
-      self.close();
-
-
-
-  # FIXME
-  def update(self):
-      cursor = self.connect();
-      sql = 'update '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in self.data))
-      sql += " where id='%s'"
-      with open('cmd.sql', 'w') as fd: fd.write(sql);
-      cursor.execute(sql, self.data.values()+[self.data["id"]]);
-      self.close();
-
-
-
-  def do_queries(self, sqls):
-      with open('cmd.sql', 'w') as fd: fd.write(str(sqls));
-      cursor = self.connect();
-      for sql in sqls:
-        cursor.execute(sql);
-      self.close();
-
-
-  def redraw(self):
-      stdscr.redrawwin();
-      stdscr.refresh();
-      cmdwin.redrawwin();
-      cmdwin.refresh();
-      self.window.redrawwin();
-
-
-
-  def new_window(self):
-
-     # FIXME: re-size if window adjusted
-     (width, height) = terminal_size();
-     self.window = curses.newwin(height-8, width-6, 4, 2)
-
-     self.window.border('|', '|', '-', '-', '+', '+', '+', '+');
-     self.window.keypad(True);
-     self.window.refresh();
-
-
-     # FIXME: should be able to override or carry menus down
-     if self.temp == False:
-        x = Menu("insert", []).with_callback(
-               (self, MySQLObj.insert, [])
-        )
-     else:
-        x = Menu("update", []).with_callback(
-               (self, MySQLObj.update, [])
-        )
-
-     mini = Menu("option", [
-               Menu("clear", []).with_callback (
-                 (self, MySQLObj.clear, [])
-               ),
-               x
-            ]);
-
-     opts = {"sideways": True, "dig": None, "autoquit": True};
-
-
-     if self.temp == False:
-        self.data = dict(zip( self.types.keys(), [x[0] for x in self.types.values()] ));
-
-
-     while True:
- 
-         i = 0;
-         for key in self.data:
-            color = (i == self.isel); 
-            self.window.addstr(i+2, 5, key, curses.color_pair(2-int(color)));
-            if self.data[key]:
-                  spaces = '' if len(str(self.data[key])) >= 70 else (70-len(str(self.data[key])))*' '
-                  self.window.addstr(i+2, 25, str(self.data[key])[:70]+spaces, curses.color_pair(int(color)));
-            else: self.window.addstr(i+2, 25, 80*' ', curses.color_pair(int(color)));
-            i += 1;
- 
-         self.window.refresh();
-         k = stdscr.getch()
- 
-
-         # FIXME: scrolling for objects whose fields exceed height
-         # Thus require imin, imax, kmin, kmax and scroller code in view_window
-         if up(k):
-            if self.isel > 0:
-               self.isel -= 1
-
-         elif down(k):
-            if self.isel < len(self.data)-1:
-               self.isel += 1
-
-
-         elif k == ord(' ') or k == curses.KEY_ENTER or k == 10 or k == 13:
-            key = self.data.keys()[self.isel];
-            if self.types[key][0] == "text":
-                dat = self.data[key];
-                result = toolbelt.editors.vim(dat);
-                self.redraw();
-            else:
-                fieldwin = curses.newwin(1, 80, self.isel+6, 27)
-                notepad = curses.textpad.Textbox(fieldwin);
-                result = notepad.edit();
-            if self.types[key][0] == "datetime":
-                result = commlib.str2dt(result);
-                dtstr = str(result)
-                cmdwin.addstr(1, 2, dtstr+' '*(76-len(dtstr)), curses.color_pair(2));
-                cmdwin.refresh();
-            elif self.types[key][0] == "blob":
-                with open(result, "rb") as binary_file:
-                     result = binary_file.read();
-            self.data[key] = result;
-
-
-         elif k == ord('e'):
-            key = self.data.keys()[self.isel];
-            if self.types[key][0] == "email":
-               address = self.data[key];
-               cmdwin.addstr(1, 1, 's>', curses.color_pair(2));
-               cmdwin.refresh();
-               subject = command();
-               body = toolbelt.editors.vim(None);
-               self.redraw();
-               cmdwin.addstr(1, 1, 'a>', curses.color_pair(2));
-               cmdwin.refresh();
-               attach = command();
-               cmdwin.addstr(1, 1, '  ', curses.color_pair(2));
-               cmdwin.refresh();
-               commlib.email(address, subject, body, attach);
-
-
-         elif k == ord('t'):
-              key = self.data.keys()[self.isel];
-              if self.types[key][0] == "number" or self.types[key][0] == "phone":
-                 number = data[self.isel];
-                 number = str(number);
-                 message = toolbelt.editors.vim(None);
-                 #if not self.tx:
-                 #   self.tx = commlib.Texter();
-                 commlib.text(number, message);
-                 self.redraw();
-
-
-         elif k == ord('\t'):
-            dig = command().rstrip().split(" ");
-            opts["dig"] = dig;
-            mini.show_submenu(opts);
-            mini.window.clear();
-            mini.window.refresh();
-
-         elif k == ord('m'):
-            mini.show_submenu(opts);
-            mini.window.clear();
-            mini.window.refresh();
-
-         elif k == ord('q'):
-            self.window.clear();
-            self.window.refresh();
-            break;
- 
-
-
-  def view_window(self):
-      if self.temp == False:
-         res = self.quicksearch_window();
-         self.data = res[0];
-      self.temp = True;
-      self.new_window();
-      self.temp = False;
-      return;
-
-
-
-  # should be called edit window
-  def edit_window(self):
-
-      # FIXME: the dig variable should carry to here,
-      # to put query in
-      res = self.quicksearch_window();
-      if not res:
-         return;
-
-      self.data = res[0];
-      #code.interact(local=locals());
-
-      # FIXME: allow window size adjustment
-      (width, height) = terminal_size();
-      if not self.window:
-          self.window = curses.newwin(height-8, width-6, 4, 2)
-          self.window.border('|', '|', '-', '-', '+', '+', '+', '+');
-          self.window.keypad(True);
-      self.window.refresh();
-
-      # FIXME: better names for these
-      self.isel = 0;
-      self.ksel = 0;
-
-      keys = self.data.keys()
-      data = [list(zip(d.values())) for d in res]
-
-      maxlen = len(max(self.data.keys(), key=len));
-      imin = kmin = 0;
-      imax = len(data) if len(data) < height-9 else height-9;
-
-      num_keys = len(keys);
-      num_showable = int(math.floor((width-6)/(maxlen+2)));
-      kmax = num_keys if num_keys < num_showable else num_showable;
-
-      sqls = [];
-
-      while True:
-
-          k = 0;
-          for k in range(kmin, kmax):
-              key = keys[k];
-              krel = k - kmin;
-              colorpair = int(k==self.ksel) + 3;
-              spaces = ' ' if (len(key) >= maxlen) else (maxlen+1-len(key))*' ';
-              self.window.addstr(1, (1+krel*(maxlen+2)), key+spaces, curses.color_pair(colorpair));
-          
-
-          i = 0;
-          for i in range(imin, imax):
-              k = 0;
-              irel = i - imin;
-              for k in range(kmin, kmax):
-                  krel = k - kmin;
-                  colorpair = ((i==self.isel) != (k==self.ksel));
-                  try:
-                    if len(data[i][k]) > 1: colorpair += 5;
-                  except:
-                    code.interact(local=locals());
-                  val = str(data[i][k][0]);
-                  spaces = ' ' if (len(val) >= maxlen) else (maxlen+1-len(val))*' ';
-                  vallen = len(val) if len(val) < maxlen else maxlen;
-                  self.window.addstr(irel+2, (1+krel*(maxlen+2)), val[0:vallen]+spaces, curses.color_pair(colorpair));
-              
-
-          k = self.window.getch();
-
-
-          # FIXME: make a global function
-          def scroll(which, imin, kmin, imax, kmax):
-              if which == "up":
-                   if imin > 0: 
-                      imin -= 1;
-                      imax -= 1;
-              elif which  == "down":
-                   if imax < len(res) - 2: 
-                      imin += 1;
-                      imax += 1;
-              elif which  == "right":
-                   if kmax < len(res[0]):
-                      kmax += 1;
-                      kmin += 1;
-              elif which == "left":
-                   if kmin > 0:
-                      kmax -= 1;
-                      kmin -= 1;
-              return (imin, kmin, imax, kmax);
-              
-
-          n = 1;
-
-          if k < 255 and chr(k).isdigit():
-             num = ""
-             while chr(k).isdigit():
-                   num += chr(k);
-                   k = self.window.getch();
-             n = int(num)
-          
-          for i in range(0, n):
-
-              if up(k):
-                 if self.isel > 0:
-                    self.isel -= 1;
-                    if self.isel <= imin:
-                        (imin, kmin, imax, kmax) = scroll(
-                           "up", imin, kmin, imax, kmax
-                        );
-
-              elif k == ord('K'):
-                        (imin, kmin, imax, kmax) = scroll(
-                           "up", imin, kmin, imax, kmax
-                        );
-
-              elif down(k):
-                 if self.isel < len(res)-1:
-                    self.isel += 1;
-                    if self.isel >= imax-3:
-                           (imin, kmin, imax, kmax) = scroll(
-                             "down", imin, kmin, imax, kmax
-                           );
-
-              elif k == ord('J'):
-                        (imin, kmin, imax, kmax) = scroll(
-                           "down", imin, kmin, imax, kmax
-                        );
-
-              elif right(k):
-                 if self.ksel < len(res[0])-1:
-                    self.ksel += 1;
-                    if self.ksel >= kmax-1:
-                           (imin, kmin, imax, kmax) = scroll(
-                             "right", imin, kmin, imax, kmax
-                           );
-
-              elif k == ord('L'):
-                        (imin, kmin, imax, kmax) = scroll(
-                           "right", imin, kmin, imax, kmax
-                        );
-
-              elif left(k):
-                 if self.ksel > 0:
-                    self.ksel -= 1;
-                    if self.ksel <= kmin:
-                           (imin, kmin, imax, kmax) = scroll(
-                             "left", imin, kmin, imax, kmax
-                           );
-
-              elif k == ord('H'):
-                        (imin, kmin, imax, kmax) = scroll(
-                           "left", imin, kmin, imax, kmax
-                        );
-
-
-          if k == ord('v'):
-               key = keys[self.ksel];
-               val = data[self.isel][self.ksel][0];
-               if len(self.types[key]) > 1:
-                  (tab, col) = self.types[key][1];
-                  sql = "select * from %s where %s='%s'" % (tab, col, val)
-                  cursor = self.connect();
-                  cursor.execute(sql);
-                  results = cursor.fetchall();
-                  result = results[0];
-                  other = MySQLObj(self.config, tab);
-                  other.data = result;
-                  other.temp = True;
-                  other.view_window();
-                  other.temp = False;
-               else:
-                   row = [x[0] for x in data[self.isel]];
-                   self.data = dict(zip(keys, row))
-                   self.temp = True;
-                   self.view_window();
-                   self.temp = False;
-
-
-          # FIXME: handle non-comparables
-          elif k == ord('>'):
-               data.sort(key = lambda x:x[self.ksel]);
-
-
-          elif k == ord('<'):
-               data.sort(key = lambda x:x[self.ksel], reverse=True);
-
-
-          elif k == ord('c'):
-               row = copy.copy(data[self.isel]);
-               cursor = self.connect();
-               cursor.execute("select max(id) from "+self.table);
-               result = cursor.fetchall();
-               maxid = int(result[0]['max(id)']) + 1;
-               idkey = keys.index("id");
-               self.close();
-               row[idkey] = (maxid,);
-               if self.isel==0:
-                  data = [row] + data[0:len(data)];
-               elif self.isel == len(data)-1:
-                  data = data[0:len(data)] + [row];
-               else:
-                  data = data[0:self.isel] + [row] + data[self.isel:len(data)]
-               sqls.append(
-                 'insert into '+self.table+' default values'
-               );
-
-
-
-          elif k == ord('d'):
-               if self.isel==0:
-                  data = data[1:len(data)];
-               elif self.isel == len(data)-1:
-                  data = data[0:len(data)-1];
-               else:
-                  data = data[0:self.isel] + data[self.isel+1:len(data)]
-               idkey = keys.index("id");
-               sqls.append(
-                 "delete from %s where id='%s'" % (self.table, data[self.isel][idkey])
-               );
-
-
-
-          elif k == ord('e'):
-               key = keys[self.ksel];
-               if key == "email":
-                  address = data[self.isel][self.ksel][0];
-                  cmdwin.addstr(1, 1, 's>', curses.color_pair(2));
-                  cmdwin.refresh();
-                  subject = command();
-                  body = toolbelt.editors.vim(None);
-                  self.redraw();
-                  cmdwin.addstr(1, 1, 'a>', curses.color_pair(2));
-                  cmdwin.refresh();
-                  attach = command();
-                  cmdwin.addstr(1, 1, ' >', curses.color_pair(2));
-                  cmdwin.refresh();
-                  commlib.email(address, subject, body, attach);
-
-
-          elif k == ord('t'):
-               key = keys[self.ksel];
-               if key == "number" or key == "phone":
-                  number = data[self.isel][self.ksel][0];
-                  number = str(number);
-                  message = toolbelt.editors.vim(None);
-                  #if 'self.tx' not in vars():
-                  #   self.tx = commlib.Texter();
-                  commlib.text(number, message);
-                  self.redraw();
-
- 
-          elif k == ord(' ') or k == curses.KEY_ENTER or k == 10 or k == 13:
-               key = self.data.keys()[self.ksel];
-               if self.types[key][0] == "text":
-                  text = data[self.isel][self.ksel][0];
-                  value = toolbelt.editors.vim(text);
-                  self.redraw();
-               else: value = command();
-               if self.types[key][0] == "datetime":
-                  value = commlib.str2dt(value);
-                  dtstr = str(value)
-                  cmdwin.addstr(1, 4, dtstr+' '*(76-len(dtstr)), curses.color_pair(2));
-                  cmdwin.refresh();
-               elif self.types[key][0].endswith("blob"):
-                    with open(value, "rb") as binary_file:
-                         value = binary_file.read();
-               data[self.isel][self.ksel] = (value,1);
-               idkey = keys.index("id");
-               sqls.append('update {} set {}="{}" where id={}'.format(
-                   self.table, key, value, data[self.isel][idkey]
-                 )
-               )
-                 
-
-          # FIXME: print results
-          elif k == ord('s'):
-               self.do_queries(sqls);
-               for i in range(len(data)):
-                   for k in range(len(data[0])):
-                       val = data[i][k][0]
-                       data[i][k] = (val,)
-               sqls = [];
-
-
-          elif k == ord('q'):
-             self.window.clear();
-             self.window.refresh();
-             self.isel = 0;
-             break;
-            
-
-      return;
-
-
-  # Should show a spreadsheet-style window.  Clicking a key should order 
-  # dictionary by that key (simple enough function to write).  Clicking a field
-  # will allow editing that field.  'e' should open edit menu on object.
-  def list_window(self):
-      return;
-
-
-
-  def quicksearch_window(self):
-      clause = command();
-      cursor = self.connect();
-      sql = "select * from "+self.table+" "+clause;
-      cursor.execute(sql);
-      res = cursor.fetchall();
-      self.db.close();
-      with open('search.sql', 'w') as fd: fd.write(str(res));
-      return res;
-
-
-
-################################################################################
-# For dealing with ncurses menus
-################################################################################
-class Menu:
-
-
-
-  selection = 0;
-  title = "";
-  submenus = [];
-  ycoord = 2;
-  obj = None;
-  opts = {};
-  callback = None;
-  kwargs = None;
-  window = None;
-
-
-
-  def with_callback(self, x):
-    (obj, callback, kwargs) = x
-    self.obj = obj;
-    self.callback = callback;
-    self.kwargs = kwargs;
-    return self;
-
-
-
-  def __init__(self, title, submenus):
-    self.title = title;
-    self.submenus = submenus;
-    if self.submenus:
-       lastycoord = self.ycoord; 
-       for i in range(len(self.submenus)):
-           submenus[i].ycoord = lastycoord;
-           lastycoord += len(submenus[i].title) + 4;
-
-
-
-  def activate(self):
-    if self.callback:
-       self.callback(self.obj);
-
-
-
-  def submenu_str():
-    string_list = []
-    for submenu in submenus:
-        string_list.append(submenu.title);
-    return string_list;
-
-
-
-  def show_main_menu(self):
-
-    global stdscr, cmdwin, linewin;
-
-    stdscr = curses.initscr()
-    stdscr.keypad(True);
-    stdscr.border('|', '|', '-', '-', '+', '+', '+', '+');
-    self.window = stdscr;
-
-    (width, height) = terminal_size();
-    cmdwin = curses.newwin(3, width-6, height-4, 2)
-    linewin = curses.newwin(1, width-10, height-3, 6);
-    cmdwin.border(0);
-
-    curses.start_color()
-
-    # FIXME: override these
-    curses.init_pair(1, 
+global stdscr;
+stdscr = curses.initscr()
+stdscr.keypad(True);
+stdscr.border(0);
+
+(width, height) = terminal_size();
+stdscr.resize(height, width);
+stdscr.refresh();
+
+curses.noecho();
+curses.start_color();
+
+curses.init_pair(1, 
       curses.COLOR_WHITE,
-      color_med
-    )
+      curses.COLOR_RED
+)
 
-    curses.init_pair(2, 
-      color_med,
+curses.init_pair(2, 
+      curses.COLOR_RED,
+      curses.COLOR_WHITE
+)
+
+curses.init_pair(3, 
+      curses.COLOR_YELLOW,
       curses.COLOR_BLACK
-    )
+)
 
-    curses.init_pair(4, 
+curses.init_pair(4, 
       curses.COLOR_BLACK,
-      color_light
-    )
-
-    curses.init_pair(3, 
-      color_light,
-      curses.COLOR_BLACK
-    )
-
-    curses.init_pair(5,
-      color_odd,
-      curses.COLOR_BLACK
-    )
-
-    curses.init_pair(6,
-      curses.COLOR_WHITE,
-      color_odd
-    )
-
-    curses.noecho()
-    curses.cbreak()
-
-    # FIXME: window adjustments
-    rail = (width-2)*'-'
-    stdscr.addstr(1, 1, rail, curses.color_pair(2));
-    stdscr.addstr(3, 1, rail, curses.color_pair(2));
-    stdscr.refresh();
-
-    cmdwin.border(0);
-    cmdwin.addstr(1, 2, ">", curses.color_pair(2));
-    cmdwin.refresh();
-
-    opts = {"sideways": True, "dig": None};
-    self.show_submenu(opts);
+      curses.COLOR_YELLOW
+)
 
 
 
-  def show_submenu(self, opts):
-
-    #simpleaudio.playaudio("/home/dominic/open.wav");
-
-    if "dig" in opts:
-      dig = opts["dig"];
-    else: dig = None;
-
-    if "sideways" in opts:
-      sideways = opts["sideways"];
-    else: sideways = False;
-
-    if "animate" in opts:
-      animate = opts["sideways"];
-    else: animate = False;
-
-    if "autoquit" in opts:
-      autoquit = opts["sideways"];
-    else: autoquit = False;
+def startup():
+    # export PYTHONIOENCODING=utf8
+    # reload(sys)
+    # locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
-    if not self.window:
-        self.window = curses.newwin(len(self.submenus)+4, 30, 4, self.ycoord)
-        self.window.border(0);
-        self.window.keypad(True);
+
+# Keybindings for various windows. A binding is a dictionary
+# which has key as the key, and the tuple (callback, args) as
+# the value.
+class KeyBindings():
+
+    bindings = {}
+
+    def __init__(self, bindings=None):
+        if bindings == None:
+           bindings = {};
+        else: self.bindings = bindings;
+
+    def add(self, key, callback, args):
+        self.bindings[key] = (callback, args);
+
+    def handle(self, key):
+        if key not in self.bindings: return True;
+        (callback, args) = self.bindings[key];
+        if args == None: return callback();
+        else:            return callback(args);
+
+    def legend(self):
+        str = "";
+        for key in self.bindings:
+            str += "   " + key + ": " + self.bindings[key][0].__name__ + '\n';
+        notewin.write(str);
+        return True;
 
 
-    while True:
+# Default keybindings for any interactive window.
+def default_kb(obj):
 
-        cmdwin.border(0);
-        cmdwin.addstr(1, 2, ">", curses.color_pair(2));
-        cmdwin.refresh();
+    def up(obj):
+        obj.cursor.up();
+        return True;
+        
+    def down(obj):
+        obj.cursor.down();
+        return True;
 
-        if animate:
+    def left(obj):
+        obj.cursor.left();
+        return True;
+
+    def right(obj):
+        obj.cursor.right();
+        return True;
+
+    def quit(obj=None):
+        if obj:
+            obj.windowpanel.window.clear();
+            obj.windowpanel.window.refresh();
+        return False;
+
+    def tab(obj=None):
+        cmd = cmdwin.read();
+        cmd = cmd.split();
+        obj.command(cmd);
+        return True;
+
+    def enter(obj):
+        if isinstance(obj, MainMenu):
+           pos = obj.cursor.xpos;
+        else:
+           pos = obj.cursor.ypos;
+        obj.submenus[pos].draw();
+        return True;
+
+    def legend(obj):
+        obj.keybindings.legend();
+
+    bindings = {};
+    bindings['k'] = (up,    obj);
+    bindings['j'] = (down,  obj);
+    bindings['h'] = (left,  obj);
+    bindings['l'] = (right, obj);
+    bindings['q'] = (quit,  obj);
+    bindings['?'] = (legend,  obj);
+    bindings['\n'] = (enter,  obj);
+    bindings['\t'] = (tab,  obj);
+
+    return KeyBindings(bindings);
+
+
+
+# Contains a curses window and its panel.  Makes it easier
+# to associate windows with their panels.
+class WindowPanel():
+    
+    xoff = 1;
+    yoff = 1;
+    xlen = 10;
+    ylen = 10;
+
+    title  = "";
+    colors = None;
+    window = None;
+    panel  = None;
+    border = None;
+
+    def __init__(self, coords, title, colors=None): 
+
+        (xo, yo, xl, yl) = coords;
+        self.xoff = xo;
+        self.yoff = yo;
+        self.xlen = xl;
+        self.ylen = yl;
+        self.title = title;
+        self.colors = colors;
+
+        self.window = curses.newwin(
+          self.xlen,
+          self.ylen,
+          self.xoff,
+          self.yoff
+        );
+
+        self.panel = curses.panel.new_panel(
+          self.window
+        );
+
+
+    def remake(self):
+        #print self.xoff, self.yoff, self.xlen, self.ylen;
+        if self.xlen > 0 and self.ylen > 0:
+           self.window.resize(self.ylen, self.xlen);
+        self.window.mvwin(self.yoff, self.xoff);
+
+
+
+class Cursor():
+
+      xpos        = 0
+      xmin        = 0
+      xmax        = 0
+      ypos        = 0
+      ymin        = 0
+      ymax        = 0
+
+      def up(self):
+          if self.ypos > self.ymin:
+             self.ypos -= 1;
+      
+      def down(self):
+          if self.ypos < self.ymax-1:
+             self.ypos += 1;
+
+      def left(self):
+          if self.xpos > self.xmin:
+             self.xpos -= 1;
+
+      def right(self):
+          if self.xpos < self.xmax-1:
+             self.xpos += 1;
+
+      def str(self):
+          return (self.xpos, self.ypos), (self.xmin, self.xmax, self.ymin, self.ymax);
+
+      def __init__(self, xmin, xmax, ymin, ymax):
+          self.xpos = xmin;
+          self.xmin = xmin;
+          self.xmax = xmax;
+          self.ypos = ymin;
+          self.ymin = ymin;
+          self.ymax = ymax;
+
+
+# Interactive window with widget such as calendar, 
+# The field *commands* is a list of (grammar, callback, args).
+class InteractiveWindow():
+
+      windowpanel = None;
+      keybindings = None;
+      cursor      = None;
+      title       = "";
+      
+
+      def __init__(self, title, keybindings):
+          coords = (1,1,10,10);
+          self.title = title;
+          self.keybindings = keybindings;
+          self.windowpanel = WindowPanel(
+            coords, title
+          );
+
+      
+      def draw(self):
+          pass;
+
+
+      def wait(self):
+        stdscr.refresh();
+        self.windowpanel.window.border('|', '|', '-', '-', '+', '+', '+', '+' );
+        self.windowpanel.window.refresh();
+        k = chr(stdscr.getch());
+        retval = self.keybindings.handle(k);
+        self.windowpanel.window.refresh();
+        return retval;
+
+
+# A window specifically for displaying a MySQL object. It has
+# a SQUId, which can be used to query and manipulate the
+# object.
+class ObjectWindow(InteractiveWindow):
+
+    squid = None;
+
+    def __init__(self, title, keybindings, squid):
+        InteractiveWindow.__init__(self, title, keybindings);
+        if self.keybindings == None:
+           self.keybindings = default_kb(self);
+        self.squid = squid;
+
+
+
+class NewWindow(ObjectWindow):
+
+    def get_value(self):
+
+        fieldwin = curses.newwin(1, 20, 
+            self.windowpanel.yoff+self.cursor.ypos+2,
+            self.windowpanel.xoff+self.maxkeylen+5,
+        );
+
+        key = self.keys[self.cursor.ypos];
+        sqltype = self.squid.fields[key];
+
+        notepad = curses.textpad.Textbox(fieldwin);
+        if sqltype == "text":
+           if key in self.squid.data:
+             result = self.squid.data[key];
+           else: result = "";
+           result = toolbelt.editors.vim(result);
+           stdscr.clear();
+           stdscr.refresh();
+           self.windowpanel.window.refresh();
+        else: result = notepad.edit();
+
+        if sqltype == "datetime":
+           result = toolbelt.converters.date(result);
+
+        self.squid.data[key] = result;
+        return True;
+
+
+    def insert(self):
+        notewin.write(self.squid.data);
+        self.squid.insert(self.squid.data);
+
+
+    def __init__(self, title, keybindings, squid):
+
+        ObjectWindow.__init__(self, title, keybindings, squid);
+        self.keybindings.add('\n', self.get_value, None)
+        self.keybindings.add('i', self.insert, None);
+
+        self.squid.query("select max(id) from "+self.squid.table);
+        self.squid.data = self.squid.data[0];
+        self.squid.data['id'] = self.squid.data['max(id)'] + 1;
+        del self.squid.data['max(id)'];
+
+        self.keys = self.squid.get_fields();
+        self.reconstruct();
+
+
+    def reconstruct(self):
+
+        self.cursor = Cursor(0, 0, 0, len(self.keys));
+        self.maxkeylen = len(max(self.keys, key=len));
+        self.maxkeylen = self.maxkeylen if self.maxkeylen < 20 else 20;
+        self.maxvallen = 20;
+        self.windowpanel.ylen = len(self.keys) + 5;
+        self.windowpanel.xlen = self.maxkeylen + self.maxvallen + 20;
+        self.windowpanel.xoff = 2;
+        self.windowpanel.yoff = 4;
+        self.windowpanel.remake();
+
+
+    def draw(self):
+
+        keycode = True;
+
+        while keycode == True:
+
            i = 0;
-           for submenu in self.submenus:
-             if sideways:
-                self.window.addstr(2, submenu.ycoord, submenu.title, curses.color_pair(2));
-             else: self.window.addstr(i+2, 3, submenu.title, curses.color_pair(2));
-             i += 1;
-             self.window.refresh();
-             time.sleep(.1);
-           self.window.border(0);
-           self.window.refresh();
-           time.sleep(.3);
+           for key in self.keys:
+               if key in self.squid.data:
+                  val = str(self.squid.data[key]);
+               else: val = '';
+               keyspaces = ' ' * (self.maxkeylen - len(key));
+               valspaces = ' ' * (self.maxvallen - len(val));
+               color = (i == self.cursor.ypos) + 1;
+               self.windowpanel.window.addstr(
+                         i+2, 2, key[:20]+keyspaces+' : '+val+valspaces, 
+                         curses.color_pair(color)
+               );
+               i = i + 1;
 
+           keycode = self.wait();
+
+        self.windowpanel.window.clear();
+        self.windowpanel.window.refresh();
+
+
+
+class EditWindow(ObjectWindow):
+
+    def asc_sort(self):
+        self.data.sort(key = lambda x:x[self.cursor.xpos]);
+        return True;
+
+    def desc_sort(self):
+        self.data.sort(key = lambda x:x[self.cursor.xpos], reverse=True);
+        return True;
+
+    def scroll_right(self):
+        if self.xmax < len(self.keys):
+           self.xmax = self.xmax + 1;
+           self.xmin = self.xmin + 1;
+           self.cursor.right();
+        return True;
+
+    def scroll_left(self):
+        if self.xmin > 0:
+           self.xmin = self.xmin - 1;
+           self.xmax = self.xmax - 1;
+           self.cursor.left();
+        return True;
+
+    def scroll_down(self):
+        if self.ymax <= len(self.data)-1:
+           self.ymin = self.ymin + 1;
+           self.ymax = self.ymax + 1;
+           self.cursor.down();
+        return True;
+
+    def scroll_up(self):
+        if self.ymin > 0:
+            self.ymin = self.ymin - 1;
+            self.ymax = self.ymax - 1;
+            self.cursor.up();
+        return True;
+
+    def __init__(self, title, keybindings, squid):
+
+        ObjectWindow.__init__(self, title, keybindings, squid);
+        self.keybindings = default_kb(self);
+
+        self.keybindings.add('>', self.asc_sort,  None);
+        self.keybindings.add('<', self.desc_sort, None);
+
+        self.keybindings.add('L', self.scroll_right, None);
+        self.keybindings.add('H', self.scroll_left,  None);
+        self.keybindings.add('J', self.scroll_down,  None);
+        self.keybindings.add('K', self.scroll_up,    None);
+
+        self.keys = self.squid.get_fields();
+
+        self.maxkeylen = len(max(self.keys, key=len));
+        self.maxkeylen = self.maxkeylen if self.maxkeylen < 20 else 20;
+        self.maxvallen = 10;
+
+        (w, h) = terminal_size();
+        self.windowpanel.xlen = w - 6;
+        self.windowpanel.ylen = h - 8;
+        self.windowpanel.xoff = 2;
+        self.windowpanel.yoff = 4;
+        self.windowpanel.remake();
+
+
+    def draw(self):
+
+        sql = cmdwin.read();
+        if sql=="": sql="select * from "+self.squid.table;
+        self.squid.query(sql);
+
+        if not self.squid.data:
+           notewin.write("No results!");
+           return;
+
+        self.data = [list(zip(d.values())) for d in self.squid.data]
+        self.cursor = Cursor(0, len(self.keys), 0, len(self.data));
+
+        self.xmin = self.cursor.xmin;
+        self.xvis = self.windowpanel.xlen / self.maxvallen - 2;
+        self.xmax = self.xvis if len(self.keys) > self.xvis else len(self.keys);
+        self.ymin = self.cursor.ymin;
+        self.yvis = self.windowpanel.ylen - 2;
+        self.ymax = self.yvis if len(self.data) > self.yvis else len(self.data);
+
+        keycode = True;
+
+        while keycode:
+              
+              # Draw the keys
+              xpos = 0;
+              ypos = 0;
+              for xpos in range(self.xmin, self.xmax):
+                  dat = self.keys[xpos][0:self.maxvallen-2];
+                  numspaces = self.maxvallen - 2 - len(dat);
+                  self.windowpanel.window.addstr(
+                    1,
+                    1+(xpos - self.xmin)*self.maxvallen,
+                    dat + ' '*numspaces,
+                    curses.color_pair(4)
+                  )
+
+              # Draw the data entries
+              xpos = 0;
+              ypos = 0;
+              for ypos in range(self.ymin, self.ymax):
+                  for xpos in range(self.xmin, self.xmax):
+                      color = (self.cursor.xpos == xpos and self.cursor.ypos == ypos) + 1;
+                      dat = str(self.data[ypos][xpos][0])[0:self.maxvallen-2].encode('ascii', 'ignore'),
+                      numspaces = self.maxvallen - 2 - len(dat);
+                      self.windowpanel.window.addstr(
+                        (ypos - self.ymin)+2,
+                        1+(xpos - self.xmin)*self.maxvallen,
+                        "".join(dat) + ' '*numspaces,
+                        curses.color_pair(color)
+                      )
+
+              keycode = self.wait();
+
+
+
+class ViewWindow(ObjectWindow):
+
+
+  def __init__(self, title, keybindings, squid):
+
+      ObjectWindow.__init__(self, title, keybindings, squid);
+      self.keybindings = default_kb(self);
+
+
+  def draw(self):
+
+        sql = cmdwin.read();
+        self.squid.query(sql);
+
+        if self.squid.data:
+           datum = self.squid.data[0]
+           keys = datum.keys();
+           self.cursor = Cursor(0, len(self.squid.data), 0, len(keys));
+           vals = map(str, datum.values());
+           maxkeylen = len(max(keys, key=len));
+           maxkeylen = maxkeylen if maxkeylen < 20 else 20;
+           maxvallen = 20;
+           self.windowpanel.ylen = len(keys) + 5;
+           self.windowpanel.xlen = maxkeylen + maxvallen + 4;
+           self.windowpanel.xoff = 2;
+           self.windowpanel.yoff = 4;
+           self.windowpanel.remake();
+
+           keycode = True;
+           while keycode:
+
+               datum = self.squid.data[self.cursor.xpos]
+
+               i = 0;
+               for key in datum:
+                   val = str(datum[key])[:20];
+                   keyspaces = ' ' * (maxkeylen - len(key));
+                   valspaces = ' ' * (maxvallen - len(val));
+                   color = (i == self.cursor.ypos) + 1;
+                   self.windowpanel.window.addstr(
+                         i+2, 
+                         2, 
+                         key[:20]+keyspaces+' : '+val+valspaces, 
+                         curses.color_pair(color)
+                   );
+                   i = i + 1;
+
+               keycode = self.wait();
+
+
+class NotificationWindow(InteractiveWindow):
+
+    msg = "";
+
+
+    def quit(obj=None):
+        return False;
+
+
+    def __init__(self):
+
+        (width, height) = terminal_size();
+        InteractiveWindow.__init__(self, None, None);
+
+        self.windowpanel.xoff = 2;
+        self.windowpanel.yoff = 4;
+        self.windowpanel.xlen = width - 6;
+        self.windowpanel.ylen = height - 6;
+        self.windowpanel.remake();
+
+        self.keybindings = KeyBindings();
+        self.keybindings.add('\n', self.quit, None);
+
+
+    def draw(self):
+
+        mmax = len(self.msg);
+        step = self.windowpanel.xlen - self.windowpanel.xoff*2;
+        lmax = mmax / step;
+        if lmax <= 0: 
+           lmax = 1;
+        elif lmax > self.windowpanel.ylen-2:
+           lmax = self.windowpanel.ylen-2;
+
+        for x in range(0, lmax):
+            self.windowpanel.window.addstr(
+                 2+x, 
+                 3,
+                 self.msg[x*step:(x+1)*step],
+                 curses.color_pair(1)
+            );
+
+        self.wait();
+
+
+    def write(self, msg):
+        self.msg = str(msg);
+        self.draw();
+
+
+class CmdWindow(InteractiveWindow):
+
+    mainmenu = None;
+    linewin  = None;
+
+    def __init__(self, mainmenu=None):
+
+        self.mainmenu = mainmenu;
+        InteractiveWindow.__init__(self, None, None);
+
+        (width, height) = terminal_size();
+        self.windowpanel.xlen = width - 12;
+        self.windowpanel.ylen = 3;
+        self.windowpanel.yoff = height - 4;
+        self.windowpanel.xoff = 2;
+
+        self.windowpanel.remake();
+
+        self.linewin = curses.newwin(1, width-16, height-3, 10);
+        self.draw();
+
+
+    def draw(self):
+        self.windowpanel.window.addstr(
+             1, 3,
+             " > ",
+             curses.color_pair(1)
+        );
+        self.windowpanel.window.border('|', '|', '-', '-', '+', '+', '+', '+' );
+        self.windowpanel.window.refresh();
+
+    def undraw(self):
+        self.windowpanel.window.clear();
+        self.windowpanel.window.refresh();
+
+    def read(self):
+        self.draw();
+        cmdpad = curses.textpad.Textbox(self.linewin);
+        x = cmdpad.edit(validate);
+        for i in range(0, len(x)):
+          cmdpad.do_command(curses.KEY_BACKSPACE);
+        #self.undraw();
+        return x
+
+
+
+# A submenu underneath the main menu.
+class SubMenu(InteractiveWindow):
+
+    # Commands include submenu titles, and their callbacks open
+    # the menu.
+    submenus = [];
+
+    def maxlen(self):
+        max_len = 0;
+        for submenu in self.submenus:
+            length = len(submenu.title)
+            if length > max_len:
+               max_len = length;
+        return max_len;
+
+
+    def __init__(self, title, keybindings, submenus):
+        self.submenus = submenus;
+        self.cursor = Cursor(0, 0, 0, len(self.submenus));
+        InteractiveWindow.__init__(self, title, keybindings);
+        self.keybindings = default_kb(self);
 
         i = 0;
-        for submenu in self.submenus:
-            if (dig and dig[0] == submenu.title) or (self.selection == i):
-                  self.selection = i;
-                  colorpair = 1;
-            else: colorpair = 2;
-            if sideways:
-                  self.window.addstr(2, submenu.ycoord, submenu.title, curses.color_pair(colorpair));
-            else: self.window.addstr(i+2, 3, submenu.title, curses.color_pair(colorpair));
-            i += 1;
+        maxlen = self.maxlen();
+        for submenu in submenus:
+            if isinstance(submenu, SubMenu):
+                submenu.windowpanel.xoff = self.windowpanel.xoff + maxlen;
+                submenu.windowpanel.yoff = self.windowpanel.yoff + i;
+                submenu.windowpanel.xlen = submenu.maxlen();
+                submenu.windowpanel.ylen = len(submenu.submenus);
+                submenu.windowpanel.remake();
+            i = i + 1;
 
 
-        self.window.border(0);
-        self.window.refresh();
-        
-
-        if dig:
-           if animate: time.sleep(.3);
-           submenu = self.submenus[self.selection];
-           submenu.activate();
-           if submenu.submenus:
-              subopts = {
-                "sideways":False, 
-                "dig":dig[1:], 
-                "animate":animate, 
-                "autoquit": autoquit
-              };
-              submenu.show_submenu(subopts);
-           elif autoquit:
-             self.window.clear();
-             self.window.refresh();
-             break;
-           dig = None;
-           self.window.border(0);
-           self.window.refresh();
+    def command(self, cmd):
+        if len(cmd) > 1:
+           for submenu in self.submenus:
+               if submenu.title == cmd[0]:
+                  submenu.command(cmd[1:]);
+        else:
+           for submenu in self.submenus:
+               if submenu.title == cmd[0]:
+                  submenu.draw();
+           
 
 
-        cmdwin.border(0);
-        cmdwin.addstr(1, 2, ">", curses.color_pair(2));
-        cmdwin.refresh();
+    def draw(self, cmd=None):
+
+        maxlen = self.maxlen();
+        keycode = True;
+
+        while keycode:
+
+            i = 0;
+            for submenu in self.submenus:
+                color = (i == self.cursor.ypos) + 1;
+                self.windowpanel.window.addstr(
+                     i+1, 2,
+                     submenu.title,
+                     curses.color_pair(color)
+                );
+                i = i + 1;
+
+            if cmd:
+               self.command(cmd);
+            else:
+               keycode = self.wait();
 
 
-        k = stdscr.getch()
-
-        if (up(k) and not opts["sideways"]) or (left(k) and opts["sideways"]):
-          if self.selection > 0:
-             self.selection -= 1;
-
-        elif (down(k) and not opts ["sideways"]) or (right(k) and opts["sideways"]):
-             if self.selection < len(self.submenus)-1:
-                self.selection += 1;
-
-        elif (left(k) and not opts ["sideways"]) or (up(k) and opts["sideways"]) or (right(k) and not opts ["sideways"]):
-             if self.title is not "main":
-                self.window.clear();
-                self.window.refresh();
-                curses.ungetch(k);
-                break;
-
-        elif k == ord(' ') or k == curses.KEY_ENTER or k == 10 or k == 13 or (down(k) and opts["sideways"]):
-             if self.submenus:
-                subopts = {"sideways":False, "dig":None};
-                submenu = self.submenus[self.selection];
-                submenu.activate();
-                if submenu.submenus:
-                   submenu.show_submenu(subopts);
-
-        elif k == ord('\t') and self.title == "main":
-             dig = command().rstrip().split(" ");
-             continue;
-
-        elif k == ord('q'):
-             self.window.clear();
-             self.window.refresh();
-             break;
 
 
-        self.window.border(0);
-        self.window.refresh()
-        cmdwin.border(0);
-        cmdwin.addstr(1, 2, ">", curses.color_pair(2));
-        cmdwin.refresh();
- 
+# A main menu, which is distinct in that it has stdscr.
+class MainMenu(SubMenu):
 
 
-  def exit(self):
+    #cmdwin = None;
 
-    stdscr.keypad(False);
-    curses.nocbreak();
-    curses.echo();
-    curses.resetty();
-    curses.endwin();
-    sys.exit();
 
+    def __init__(self, submenus):
+        title = "main";
+        SubMenu.__init__(self, title, None, submenus);
+        self.cursor = Cursor(0, len(self.submenus), 0, 0);
+        self.keybindings = default_kb(self);
+        (width, _) = terminal_size();
+        self.windowpanel.xlen = width-8;
+        self.windowpanel.ylen = 3;
+        self.windowpanel.xoff = 2;
+        self.windowpanel.remake();
+
+        i = 0;
+        maxlen = self.maxlen();
+        for submenu in submenus:
+            submenu.windowpanel.yoff = self.windowpanel.yoff + 3;
+            submenu.windowpanel.xoff = 5 + i * (self.maxlen()+1);
+            submenu.windowpanel.xlen = submenu.maxlen() + 4;
+            submenu.windowpanel.ylen = len(submenu.submenus) + 2;
+            submenu.windowpanel.remake();
+            submenu.windowpanel.window.refresh();
+            i = i + 1;
+        #self.cmdwin = CmdWindow(self);
+
+
+
+    def draw(self, cmd=None):
+
+        maxlen = self.maxlen();
+        keycode = True;
+
+        while keycode:
+
+            i = 0;
+            offset = 2;
+            self.windowpanel.window.clear();
+            for submenu in self.submenus:
+                color = (i == self.cursor.xpos) + 1;
+                #print self.windowpanel.yoff, self.windowpanel.xoff+offset, color
+                self.windowpanel.window.addstr(
+                     self.windowpanel.yoff, 
+                     self.windowpanel.xoff + offset, 
+                     submenu.title,
+                     curses.color_pair(color)
+                );
+                i = i + 1;
+                offset = offset + maxlen + 1;
+            
+            keycode = self.wait();
+
+
+# I left off at creating the 'Enter' keybinding for delving into submenus.
+
+global cmdwin;
+cmdwin = CmdWindow();
+global notewin;
+notewin = NotificationWindow();

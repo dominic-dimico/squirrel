@@ -6,8 +6,6 @@ import toolbelt
 import smartlog
 
 
-
-
 # Structured Query User Interface Delegator
 class Squid:
 
@@ -15,12 +13,25 @@ class Squid:
     db = None;
     config = None;
     table = None
-    data = None;
+    data = {};
+    fields = None;
 
 
     def __init__(self, config, table):
       self.config = config;
       self.table  = table;
+
+
+    def get_fields(self):
+        if self.fields == None:
+           cursor = self.connect()
+           sql = "describe "+self.table
+           cursor.execute(sql);
+           types = cursor.fetchall();
+           self.fields = {}
+           for i in range(0, len(types)):
+               self.fields[types[i]["Field"]] = types[i]["Type"];
+        return self.fields.keys();
 
 
     def connect(self):
@@ -40,10 +51,10 @@ class Squid:
 
     def query(self, sql, data=None):
         cursor = self.connect();
-        #smartlog.log(sql); smartlog.ok();
-        #smartlog.log(data); smartlog.ok();
+        sl = smartlog.Smartlog("logfile.log");
+        sl.log(sql);
         if data: cursor.execute(sql, data.values());
-        else:    cursor.execute(sql); "This one!";
+        else:    cursor.execute(sql); 
         try:    self.data = cursor.fetchall();
         except: self.data = None;
         self.close();
@@ -78,7 +89,7 @@ class Squid:
               sql = "select * from %s where %s between '%s' and '%s'" % (
                     self.table, field, str(startdt), str(enddt)
               )
-              smartlog.log(sql); smartlog.ok();
+              #smartlog.log(sql); smartlog.ok();
               cursor = self.query(sql);
               if self.data:
                  handler(self.data);
