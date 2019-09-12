@@ -12,7 +12,7 @@ class Squid:
 
     db = None;
     config = None;
-    table = None
+    table = None;
     data = {};
     fields = None;
 
@@ -49,10 +49,19 @@ class Squid:
         self.db.close();
 
 
+    def getmaxid(self):
+        save = self.data;
+        self.query("select max(id) from "+self.table);
+        self.data = self.data[0];
+        maxid = self.data['max(id)'];
+        self.data = save;
+        return maxid + 1;
+
+
     def query(self, sql, data=None):
         cursor = self.connect();
         sl = smartlog.Smartlog("logfile.log");
-        sl.log(sql);
+        sl.logn(sql);
         if data: cursor.execute(sql, data.values());
         else:    cursor.execute(sql); 
         try:    self.data = cursor.fetchall();
@@ -61,15 +70,24 @@ class Squid:
 
 
     def insert(self, data):
-        sql = 'insert into '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in data))
-        self.query(sql, data);
+        save = self.data;
+        if isinstance(self.data, dict):
+            sql = 'insert into '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in data))
+            self.query(sql, data);
+        elif isinstance(self.data, list):
+             for d in self.data:
+                 sql = 'insert into '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in d))
+                 self.query(sql, d);
+        self.data = save;
 
 
     def update(self, data):
+        save = self.data;
         id = data.pop('id');
         sql = 'update '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in data))
         sql += " where id='%s'" % id;
         self.query(sql, data);
+        self.data = save;
 
 
     def do_queries(self, queries):
@@ -89,7 +107,6 @@ class Squid:
               sql = "select * from %s where %s between '%s' and '%s'" % (
                     self.table, field, str(startdt), str(enddt)
               )
-              #smartlog.log(sql); smartlog.ok();
               cursor = self.query(sql);
               if self.data:
                  handler(self.data);
