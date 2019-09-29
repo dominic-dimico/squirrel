@@ -90,6 +90,7 @@ def startup():
     notewin = NotificationWindow();
     tabwin = TabWindow();
 
+    return (cmdwin, notewin, tabwin);
 
 
 # Keybindings for various windows. A binding is a dictionary
@@ -577,7 +578,7 @@ class EditWindow(ObjectWindow):
 
     def insert(self):
         self.squid.data = self.data;
-        self.squid.insert(self);
+        self.squid.insert();
 
 
     def view_foreignkey(self):
@@ -600,7 +601,7 @@ class EditWindow(ObjectWindow):
 
         if sqltype == "text":
            result = self.data[self.cursor.ypos][key];
-           if result == NULL: result = "";
+           if result == None: result = "";
            result = toolbelt.editors.vim(result);
            stdscr.clear();
            stdscr.refresh();
@@ -625,11 +626,11 @@ class EditWindow(ObjectWindow):
 
 
     def asc_sort(self):
-        self.data.sort(key = lambda x:x[self.cursor.xpos]);
+        self.data = sorted(self.data, key = lambda x: x[self.keys[self.cursor.xpos]]);
         return True;
 
     def desc_sort(self):
-        self.data.sort(key = lambda x:x[self.cursor.xpos], reverse=True);
+        self.data = sorted(self.data, key = lambda x: x[self.keys[self.cursor.xpos]], reverse=True);
         return True;
 
     def scroll_right(self):
@@ -719,10 +720,9 @@ class EditWindow(ObjectWindow):
 
     def draw(self, args=None):
 
-        if 'fields' in args: 
-           self.squid.fields = args['fields'];
 
-        if not args:          args = {};
+        if not args: args = {};
+        if 'fields' in args: self.squid.fields = args['fields'];
         if not 'sql' in args: args['sql'] = cmdwin.read();
         if args['sql']=="":   args['sql']="select * from "+self.squid.table;
         self.squid.query(args['sql']);

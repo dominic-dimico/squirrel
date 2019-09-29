@@ -69,8 +69,9 @@ class Squid:
         self.close();
 
 
-    def insert(self, data):
+    def insert(self, data=None):
         save = self.data;
+        if data: self.data = data;
         if isinstance(self.data, dict):
             sql = 'insert into '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in data))
             self.query(sql, data);
