@@ -44,19 +44,26 @@ def main():
   menus = ["new", "edit", "view", "list", "delete"]
 
   
-  print("""
-#!/usr/bin/python
+  print("""#!/usr/bin/python
   
 import squirrel
 import configparser
 import sys
+import smartlog
+import code
+
+log = smartlog.Smartlog();
 
   """);
   
   
   for database in data:
       for table in database["tables"]:
-          print("class %s(squirrel.squid.Squid):\n  pass\n" % table.capitalize());
+          print("class %s(squirrel.squid.Squid):" % table.capitalize());
+          for el in ['list', 'view', 'join']:
+              print("  %s_formatting = [];" % (el));
+          print("  def __init__(self, config, table):");
+          print("    super().__init__(config, table);\n\n");
   
   
   
@@ -68,10 +75,10 @@ configs = {};""");
       print("configs['%s'].read('%s.cfg')" % (configname, configname));
   
   
-  print("\nobjects = {}")
+  print("\nsquids= {}")
   for database in data:
       for table in database["tables"]:
-          print("objects['%s'] = %s(configs['%s'], '%s')" % (table, table.capitalize(), database['configname'], table))
+          print("squids['%s'] = %s(configs['%s'], '%s')" % (table, table.capitalize(), database['configname'], table))
     
   if not cli: 
 
@@ -110,72 +117,127 @@ x = squirrel.squint.MainMenu(
   else:
   
     print("""
-def gather(keys):
-    d = {};
-    for key in keys:
-        print("%s: " % key);
-        x = sys.stdin.readline();
-        d[key] = x;
-    return d;
+
+def singular(d):
+    if not d:
+       log.warn("No result found");
+       sys.exit(0);
+    if len(d) > 1: 
+       log.warn("Multiple results");
+    return d[0];
+
 
 def create(s):
-    d = {};
+    d = s.create_defaults.copy();
     keys = s.get_fields();
-    d = gather(keys);
+    d = log.gather(keys, q, d=d);
     s.insert(d);
+    log.info("Successfully inserted!");
 
-def search(s, d):
-    print("sql> ");
-    query = sys.stdin.readline();
-    s.query(query, d);
+
+def fullsearchquery(s, q):
+    if not s.join_formatting:
+       return "select %s from %s where %s" % ("*", s.table, q)
+    fs = []; # fields
+    cs = []; # conditions
+    for x in s.join_formatting:
+        fs = fs + [x['table'] + "." + y for y in x['fields']]
+        cs.append("inner join %s on %s" % (x['table'], s.table + '.' + x['foreignkey'] + '=' + x['table'] + '.' + x['primarykey']));
+    sql = "select %s from %s %s where %s" % (", ".join(fs), s.table, " ".join(cs), q);
+    return sql;
+
+
+def search(s, q=None):
+    if not q: q = log.prompt("sql");
+    s.query(q);
     return s.data;
 
-def list(s):
-    d = {};
-    d = search(s, d);
-    for x in d:
-        for k in x:
-            print("%s: %s" % (k, x[k]));
 
-def view(s):
-    d = {};
-    d = search(s, d);
-    for x in d:
-        for k in x:
-            print("%s: %s" % (k, x[k]));
+def quicksearch(s, q=None):
+    if not q: q = log.prompt("sql");
+    q = "select * from %s where %s" % (s.table, q);
+    s.query(q);
+    return s.data;
 
-def delete(s):
+
+def listing(s, q=None):
+    if not q: q = log.prompt("sql");
+    q = fullsearchquery(s, q);
+    d = search(s, q);
+    d = list(d);
+    ks = s.get_fields();
+    log.tabulate(s.list_formatting, d);
     pass
 
-def edit(s):
-    pass
 
-def update(s):
+def view(s, q=None):
+    if not q: q = log.prompt("sql");
+    q = fullsearchquery(s, q);
+    z = singular(search(s, q));
+    l = max([len(k) for k in z]);
+    for k in z:
+        sp = ' ' * (l - len(k));
+        log.info("%s%s: %s" % (k, sp, z[k]));
+
+
+def deleter(s, q=None):
+    if not q: q = log.prompt("sql");
+    q = fullsearchquery(s, q);
+    d = singular(quicksearch(s, q));
+    view(s, q);
+    if log.yesno("Really remove"):
+       q = "delete from %s where %s" % (s.table, q);
+       s.query(q);
+
+
+def edit(s, q=None):
+    if not q: q = log.prompt("sql");
+    d = singular(quicksearch(s, q));
+    view(s, q);
+    if not log.yesno("Edit?"):
+       return;
     keys = s.get_fields();
-    d = gather(keys);
+    d = log.gather(keys=keys, d=d);
     s.update(d);
 
+
+def ungather(c):
+    try:
+      s = squids[c['obj']]
+    except Exception as e:
+      print(e);
+      return False;
+    q = " ".join(c['xs']);
+    return (s, q);
+
+
+c = { 'obj' : None };
+while not c['obj']:
+
+      c = log.gatherwords(['cmd'], sys.argv[1:]);
+      if c['cmd'] == \"quit\":
+         sys.exit(0);
+      elif c['cmd'] == \"help\":
+         sys.exit(0);
+
+      c = log.gatherwords(keys=['obj'], xs=c['xs'], d=c);
+      try:
+         (s, q) = ungather(c);
+      except Exception as e:
+         print(e);
+         continue;
 """);
-    print("command = ['command', 'object']");
-    print("while True:\n");
-    print("  cmd = sys.stdin.readline().split();\n");
-    print("  if cmd[0] == \"quit\":");
-    print("     sys.exit(0);");
+
+    counter = 1;
     for menu in menus:
-        print("\n  elif cmd[0] == \"%s\":" % (menu));
-        for database in data:
-            counter = 1;
-            for table in database["tables"]:
-                if counter == 1:
-                  print("     if cmd[1] == \"%s\":" % (table));
-                else:
-                  print("     elif cmd[1] == \"%s\":" % (table));
-                if   menu=="new":     print("          create(objects['%s'])" % table);
-                elif menu=="edit":    print("          edit(objects['%s'])" % table);
-                elif menu=="view":    print("          view(objects['%s'])" % table);
-                elif menu=="list":    print("          list(objects['%s'])" % table);
-                elif menu=="delete":  print("          delete(objects['%s'])" % table);
-                counter = counter + 1;
+       if counter == 1:
+          print("      if c['cmd'] == \"%s\":" % (menu));
+       else: print("      elif c['cmd'] == \"%s\":" % (menu));
+       print("         %s(s, q);"           % (menu));
+       counter += 1;
+
+    print("\n      else: \n");
+    print("          log.warn(\"No such command\"); \n");
 
 if __name__ == "__main__":
    main();

@@ -4,6 +4,7 @@ import threading
 import time
 import toolbelt
 import smartlog
+import code
 
 
 # Structured Query User Interface Delegator
@@ -15,11 +16,13 @@ class Squid:
     table = None;
     data = {};
     fields = None;
+    log = None;
 
 
     def __init__(self, config, table):
       self.config = config;
       self.table  = table;
+      self.log    = smartlog.Smartlog();
 
 
     def get_fields(self):
@@ -31,7 +34,8 @@ class Squid:
            self.fields = {}
            for i in range(0, len(types)):
                self.fields[types[i]["Field"]] = types[i]["Type"];
-        return self.fields.keys();
+        #code.interact(local=locals());
+        return list(self.fields.keys());
 
 
     def connect(self):
@@ -55,20 +59,27 @@ class Squid:
         self.data = self.data[0];
         maxid = self.data['max(id)'];
         self.data = save;
-        return maxid + 1;
+        return maxid;
 
 
     def query(self, sql, data=None):
         cursor = self.connect();
-        sl = smartlog.Smartlog("logfile.log");
-        sl.logn(sql);
-        if data: cursor.execute(sql, data.values());
-        else:    cursor.execute(sql); 
-        try:    self.data = cursor.fetchall();
-        except: self.data = None;
+        self.log.log(sql);
+        try:
+            if data: cursor.execute(sql, data.values());
+            else:    cursor.execute(sql); 
+            self.log.ok();
+        except Exception as e:
+            self.log.fail();
+            self.log.alert(e);
+        try:    
+          self.data = cursor.fetchall();
+        except: 
+          self.data = None;
         self.close();
 
 
+    # Can insert one or more rows
     def insert(self, data=None):
         save = self.data;
         if data: self.data = data;
