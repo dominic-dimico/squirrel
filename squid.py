@@ -1,5 +1,5 @@
 import configparser
-import mysql.connector
+import MySQLdb
 import threading
 import time
 import toolbelt
@@ -35,13 +35,13 @@ class Squid:
 
 
     def connect(self):
-        self.db = mysql.connector.connect(
+        self.db = MySQLdb.connect(
           user      = self.config['main']['user'],
           password  = self.config['main']['password'],
           host      = self.config['main']['host'],
           database  = self.config['main']['database']
         );
-        return self.db.cursor(dictionary=True)
+        return self.db.cursor(MySQLdb.cursors.DictCursor);
 
 
     def close(self):

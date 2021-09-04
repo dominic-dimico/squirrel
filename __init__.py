@@ -1,3 +1,2 @@
-from squid  import *
-from squint import *
-from squish import *
+from squirrel import squid
+from squirrel import squint

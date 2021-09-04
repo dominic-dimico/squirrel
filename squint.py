@@ -14,7 +14,7 @@ import curses
 import curses.textpad
 import curses.panel
 import configparser
-import mysql.connector
+import MySQLdb
 
 import squirrel.squid
 import toolbelt
@@ -173,6 +173,7 @@ def default_kb(obj):
         if obj:
             obj.windowpanel.window.clear();
             obj.windowpanel.window.refresh();
+            stdscr.refresh();
         return False;
 
     def tab(obj=None):
@@ -542,7 +543,7 @@ class NewWindow(ObjectWindow):
 
 
     def gather(self, cmd):
-        for i in len(cmd):
+        for i in range(len(cmd)):
             key = self.keys[i];
             self.squid.data[key] = cmd[i];
 
@@ -594,6 +595,18 @@ class EditWindow(ObjectWindow):
         return True;
 
 
+    def view_foreignkey_table(self):
+        key = self.keys[self.cursor.xpos];
+        if not isinstance(self.squid.fields[key], tuple):
+           return True;
+        (squid, field) = self.squid.fields[key];
+        ew = EditWindow(squid.table, None, squid);
+        args = {};
+        args['sql'] = "select * from %s" % (squid.table);
+        ew.draw(args);
+        return True;
+
+
     def get_value(self):
 
         key = self.keys[self.cursor.xpos];
@@ -608,6 +621,8 @@ class EditWindow(ObjectWindow):
            self.windowpanel.window.refresh();
         else: result = cmdwin.read().rstrip();
 
+        # If it's a tuple, then it's a foreign key; tuple has (squid, field)
+        # indicating which table and field the foreign key points to
         if isinstance(sqltype, tuple):
            (squid, field) = sqltype;
            save = self.data;
@@ -691,6 +706,7 @@ class EditWindow(ObjectWindow):
         self.keybindings.add('J', self.scroll_down,  None);
         self.keybindings.add('K', self.scroll_up,    None);
 
+        self.keybindings.add('a', self.view_foreignkey_table, None);
         self.keybindings.add('v', self.view_foreignkey, None);
         self.keybindings.add('i', self.insert,          None);
         self.keybindings.add('d', self.delete_row,    None);
@@ -701,7 +717,7 @@ class EditWindow(ObjectWindow):
 
         self.maxkeylen = len(max(self.keys, key=len));
         self.maxkeylen = self.maxkeylen if self.maxkeylen < 20 else 20;
-        self.maxvallen = 10;
+        self.maxvallen = 15;
 
         (width, height) = terminal_size();
         self.windowpanel.resize(
@@ -714,7 +730,7 @@ class EditWindow(ObjectWindow):
     
     def gather(self, cmd):
         d = {}
-        d['sql'] = 'select * from '+ self.squid.table + ' ' + "".join(cmd);
+        d['sql'] = 'select * from '+ self.squid.table + ' ' + " ".join(cmd);
         return d;
 
 
@@ -725,6 +741,7 @@ class EditWindow(ObjectWindow):
         if 'fields' in args: self.squid.fields = args['fields'];
         if not 'sql' in args: args['sql'] = cmdwin.read();
         if args['sql']=="":   args['sql']="select * from "+self.squid.table;
+        notewin.write(args['sql']);
         self.squid.query(args['sql']);
 
         if not self.squid.data:
@@ -733,8 +750,13 @@ class EditWindow(ObjectWindow):
               return;
            else: self.squid.data = args['data'];
 
-        if 'keys' in args:
-           self.keys = args['keys'];
+
+        #if 'hidden' in args:
+        #   self.hidden = args['hidden'];
+        #if not hasattr(self, "hidden"):
+        #   self.hidden = [];
+        #if 'keys' in args:
+        #   self.keys = list(set(args['keys']) - set(self.hidden));
 
         self.data = self.squid.data;
         self.cursor = Cursor(0, len(self.keys), 0, len(self.data));
@@ -1016,6 +1038,7 @@ class SubMenu(InteractiveWindow):
 
         parts = re.findall('\[[\w+\d+ ]+\]|\w+', cmd);
         cmd = [re.sub('\[|\]', '', p) for p in parts]
+        #notewin.write(str(parts)+str(cmd));
 
         if len(cmd) < 1: 
            return;
@@ -1056,7 +1079,6 @@ class MainMenu(SubMenu):
 
 
     #cmdwin = None;
-
 
     def __init__(self, submenus):
         title = "main";
