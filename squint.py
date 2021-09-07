@@ -20,6 +20,14 @@ import squirrel.squid
 import toolbelt
 
 
+# I may be able to create a Squint class (representing the application) and
+# keep all these globals inside of it.  The Squint (i.e. the application) has
+# the tab, notification, command windows, and the main menu; so then it should
+# be possible to move these around inside of it.
+
+# Alternatively, use some sort of interprocess communication, like Queue.  It
+# may make sense to have these windows running as separate threads, especially
+# notification window.  IPC would be better for that anyway.
 
 
 def validate(str):
@@ -92,46 +100,6 @@ def startup():
 
     return (cmdwin, notewin, tabwin);
 
-
-# Keybindings for various windows. A binding is a dictionary
-# which has key as the key, and the tuple (callback, args) as
-# the value.
-class KeyBindings():
-
-    bindings = {}
-
-    def __init__(self, bindings=None):
-        if bindings == None:
-           bindings = {};
-        else: self.bindings = bindings;
-
-    def add(self, key, callback, args):
-        self.bindings[key] = (callback, args);
-
-    # Allow multiple iterations of key command; supports numbers
-    def collect(self, key):
-        num = "";
-        while key.isdigit():
-              num += key;
-              key = chr(stdscr.getch());
-        for i in range(int(num)):
-            self.handle(key);
-
-    # Handle keybinding
-    def handle(self, key):
-        if key.isdigit():
-           self.collect(key);
-        if key not in self.bindings: return True;
-        (callback, args) = self.bindings[key];
-        if args == None: return callback();
-        else:            return callback(args);
-
-    def legend(self):
-        str = "";
-        for key in self.bindings:
-            str += "   " + key + ": " + self.bindings[key][0].__name__ + '\n';
-        notewin.write(str);
-        return True;
 
 
 # Default keybindings for any interactive window.
@@ -229,7 +197,7 @@ def default_kb(obj):
     bindings['\n'] = (enter,  obj);
     bindings['\t'] = (tab,  obj);
 
-    return KeyBindings(bindings);
+    return toolbelt.keybindings.KeyBindings(bindings);
 
 
 
@@ -338,72 +306,6 @@ class WindowPanel():
            self.redraw();
         return True;
   
-
-
-
-class Coords():
-
-
-      xlen = 10;
-      ylen = 10;
-      xoff = 10;
-      yoff = 10;
-
-
-      def __init__(self, xlen, ylen, xoff, yoff):
-          self.xlen = xlen;
-          self.ylen = ylen;
-          self.xoff = xoff;
-          self.yoff = yoff;
-
-
-      def violation(self, xlen, ylen, xoff, yoff):
-          xlen += self.xlen;
-          ylen += self.ylen;
-          xoff += self.xoff;
-          yoff += self.yoff;
-          (width, height) = terminal_size();
-          if xoff + xlen < width  and yoff + ylen < height and xoff > 1 and yoff > 1: 
-             return False;
-          return True;
-            
-
-
-class Cursor():
-
-      xpos        = 0
-      xmin        = 0
-      xmax        = 0
-      ypos        = 0
-      ymin        = 0
-      ymax        = 0
-
-      def up(self):
-          if self.ypos > self.ymin:
-             self.ypos -= 1;
-      
-      def down(self):
-          if self.ypos < self.ymax-1:
-             self.ypos += 1;
-
-      def left(self):
-          if self.xpos > self.xmin:
-             self.xpos -= 1;
-
-      def right(self):
-          if self.xpos < self.xmax-1:
-             self.xpos += 1;
-
-      def str(self):
-          return (self.xpos, self.ypos), (self.xmin, self.xmax, self.ymin, self.ymax);
-
-      def __init__(self, xmin, xmax, ymin, ymax):
-          self.xpos = xmin;
-          self.xmin = xmin;
-          self.xmax = xmax;
-          self.ypos = ymin;
-          self.ymin = ymin;
-          self.ymax = ymax;
 
 
 # Interactive window with widget such as calendar, 
@@ -530,7 +432,7 @@ class NewWindow(ObjectWindow):
 
     def reconstruct(self):
 
-        self.cursor = Cursor(0, 0, 0, len(self.keys));
+        self.cursor = toolbelt.coordinates.Cursor(0, 0, 0, len(self.keys));
         self.maxkeylen = len(max(self.keys, key=len));
         self.maxkeylen = self.maxkeylen if self.maxkeylen < 20 else 20;
         self.maxvallen = 20;
@@ -759,7 +661,7 @@ class EditWindow(ObjectWindow):
         #   self.keys = list(set(args['keys']) - set(self.hidden));
 
         self.data = self.squid.data;
-        self.cursor = Cursor(0, len(self.keys), 0, len(self.data));
+        self.cursor = toolbelt.coordinates.Cursor(0, len(self.keys), 0, len(self.data));
 
         self.xmin = self.cursor.xmin;
         self.xvis = self.windowpanel.coords.xlen / self.maxvallen - 2;
@@ -841,7 +743,7 @@ class ViewWindow(NewWindow):
         if self.squid.data:
            datum = self.squid.data[0]
            keys = datum.keys();
-           self.cursor = Cursor(0, len(self.squid.data), 0, len(keys));
+           self.cursor = toolbelt.coordinates.Cursor(0, len(self.squid.data), 0, len(keys));
            vals = map(str, datum.values());
            maxkeylen = len(max(keys, key=len));
            maxkeylen = maxkeylen if maxkeylen < 20 else 20;
@@ -896,7 +798,7 @@ class NotificationWindow(InteractiveWindow):
              2,
              4 
         )
-        self.keybindings = KeyBindings();
+        self.keybindings = toolbelt.keybindings.KeyBindings();
         self.keybindings.add('\n', self.quit, None);
 
 
@@ -996,7 +898,7 @@ class SubMenu(InteractiveWindow):
         self.submenus = submenus;
         nmenus = 0;
         if self.submenus: nmenus = len(self.submenus);
-        self.cursor = Cursor(0, 0, 0, nmenus);
+        self.cursor = toolbelt.coordinates.Cursor(0, 0, 0, nmenus);
         InteractiveWindow.__init__(self, title, keybindings);
         self.keybindings = default_kb(self);
         if not self.submenus: return;
@@ -1084,7 +986,7 @@ class MainMenu(SubMenu):
         title = "main";
         SubMenu.__init__(self, title, None, submenus);
         nmenus = 0 if not self.submenus else len(self.submenus);
-        self.cursor = Cursor(0, nmenus, 0, 0);
+        self.cursor = toolbelt.coordinates.Cursor(0, nmenus, 0, 0);
         self.keybindings = default_kb(self);
         (width, height) = terminal_size();
         self.windowpanel.resize(
@@ -1145,7 +1047,7 @@ class TabWindow(InteractiveWindow):
           
           InteractiveWindow.__init__(self, "tabs", None);
           self.keybindings = default_kb(self);
-          self.cursor = Cursor(0, len(tabs), 0, 0);
+          self.cursor = toolbelt.coordinates.Cursor(0, len(tabs), 0, 0);
           (width, height) = terminal_size();
           self.windowpanel.resize(
             width - 4,

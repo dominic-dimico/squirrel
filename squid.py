@@ -95,6 +95,7 @@ class Squid:
 
     def update(self, data):
         save = self.data;
+        #print(type(data));
         id = data.pop('id');
         sql = 'update '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in data))
         sql += " where id='%s'" % id;
@@ -112,19 +113,23 @@ class Squid:
 
 
     def poll(self, polldatum):
-        (interval, field, start, end, handler) = polldatum
+        handler  = polldatum['handler']
+        args     = polldatum['args']
+        naptime  = toolbelt.dates.secondsof(polldatum['interval']);
         while True:
-              startdt = toolbelt.converters.date(start);
-              enddt = toolbelt.converters.date(end);
+              startdt = toolbelt.dates.datestr2dt(toolbelt.dates.dateof(polldatum['start']));
+              enddt   = toolbelt.dates.datestr2dt(toolbelt.dates.dateof(polldatum['end']));
               sql = "select * from %s where %s between '%s' and '%s'" % (
-                    self.table, field, str(startdt), str(enddt)
+                    self.table, polldatum['field'], str(startdt), str(enddt)
               )
               cursor = self.query(sql);
+              args["data"] = self.data;
               if self.data:
-                 handler(self.data);
-              time.sleep(interval);
+                 handler(args);
+              time.sleep(naptime);
 
         
+    # polldata is list of dictionaries
     def polls(self, polldata):
         threads = []
         for i in range(0, len(polldata)):
