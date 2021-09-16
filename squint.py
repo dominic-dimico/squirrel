@@ -426,7 +426,7 @@ class NewWindow(ObjectWindow):
         self.keybindings.add('\n', self.get_value, None)
         self.keybindings.add('i', self.insert, None);
 
-        self.keys = self.squid.get_fields();
+        self.keys = self.squid.describe();
         self.reconstruct();
 
 
@@ -615,7 +615,7 @@ class EditWindow(ObjectWindow):
         self.keybindings.add('y', self.duplicate_row, None);
         self.keybindings.add('\n', self.get_value, None)
 
-        self.keys = self.squid.get_fields();
+        self.keys = self.squid.describe();
 
         self.maxkeylen = len(max(self.keys, key=len));
         self.maxkeylen = self.maxkeylen if self.maxkeylen < 20 else 20;

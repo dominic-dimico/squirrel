@@ -61,7 +61,7 @@ log = smartlog.Smartlog();
       for table in database["tables"]:
           print("class %s(squirrel.squid.Squid):" % table.capitalize());
           for el in ['list', 'view', 'join']:
-              print("  %s_formatting = [];" % (el));
+              print("  %s_form = [];" % (el));
           print("  def __init__(self, config, table):");
           print("    super().__init__(config, table);\n\n");
   
@@ -129,18 +129,18 @@ def singular(d):
 
 def create(s):
     d = s.create_defaults.copy();
-    keys = s.get_fields();
+    keys = s.describe();
     d = log.gather(keys, q, d=d);
     s.insert(d);
     log.info("Successfully inserted!");
 
 
 def fullsearchquery(s, q):
-    if not s.join_formatting:
+    if not s.form['join']:
        return "select %s from %s where %s" % ("*", s.table, q)
     fs = []; # fields
     cs = []; # conditions
-    for x in s.join_formatting:
+    for x in s.form['join']:
         fs = fs + [x['table'] + "." + y for y in x['fields']]
         cs.append("inner join %s on %s" % (x['table'], s.table + '.' + x['foreignkey'] + '=' + x['table'] + '.' + x['primarykey']));
     sql = "select %s from %s %s where %s" % (", ".join(fs), s.table, " ".join(cs), q);
@@ -165,8 +165,8 @@ def listing(s, q=None):
     q = fullsearchquery(s, q);
     d = search(s, q);
     d = list(d);
-    ks = s.get_fields();
-    log.tabulate(s.list_formatting, d);
+    ks = s.describe();
+    log.tabulate(s.form['list'], d);
     pass
 
 
@@ -196,8 +196,14 @@ def edit(s, q=None):
     view(s, q);
     if not log.yesno("Edit?"):
        return;
-    keys = s.get_fields();
-    d = log.gather(keys=keys, d=d);
+    keys = s.describe();
+    d = log.gather({
+        'keys'       : keys, 
+        'dict' : d,
+        'opts'       : {
+           'overwrite' : True,
+        }
+    );
     s.update(d);
 
 
@@ -214,15 +220,19 @@ def ungather(c):
 c = { 'obj' : None };
 while not c['obj']:
 
-      c = log.gatherwords(['cmd'], sys.argv[1:]);
-      if c['cmd'] == \"quit\":
+      args = log.gather({
+             'keys' : ['cmd'], 
+             'xs'   : sys.argv[1:],
+          );
+      if args['data']['cmd'] == \"quit\":
          sys.exit(0);
-      elif c['cmd'] == \"help\":
+      elif args['data']['cmd'] == \"help\":
          sys.exit(0);
 
-      c = log.gatherwords(keys=['obj'], xs=c['xs'], d=c);
+      c = log.gather(c)
+
       try:
-         (s, q) = ungather(c);
+         (s, q) = ungather(c['dict']);
       except Exception as e:
          print(e);
          continue;
