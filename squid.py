@@ -3,25 +3,27 @@ import MySQLdb
 import smartlog
 import traceback
 import code
+import re
 
 
 # Structured Query User Interface Delegator
 class Squid:
 
 
-    db = None;
+    conn   = None;
     config = None;
-    table = None;
-    data = {};
+    table  = None;
     fields = None;
-    log = None;
-    form = {}
+    log    = None;
+    data   = {};
+    form   = {}
 
 
-    def __init__(self, config, table):
+    def __init__(self, config=None, table=''):
       self.config = config;
       self.table  = table;
       self.log    = smartlog.Smartlog();
+
 
 
     def describe(self, table=None):
@@ -29,8 +31,10 @@ class Squid:
            table = self.table;
         cursor = self.connect()
         sql = "describe "+table
+        self.log.log(sql);
         cursor.execute(sql);
         types = cursor.fetchall();
+        self.log.ok();
         fields = {}
         for i in range(0, len(types)):
             fields[types[i]["Field"]] = types[i]["Type"];
@@ -41,18 +45,18 @@ class Squid:
 
 
     def connect(self):
-        self.db = MySQLdb.connect(
-          user      = self.config['main']['user'],
-          password  = self.config['main']['password'],
-          host      = self.config['main']['host'],
-          database  = self.config['main']['database']
+        self.conn = MySQLdb.connect(
+          user      = self.config['user'],
+          password  = self.config['password'],
+          host      = self.config['host'],
+          database  = self.config['database']
         );
-        return self.db.cursor(MySQLdb.cursors.DictCursor);
+        return self.conn.cursor(MySQLdb.cursors.DictCursor);
 
 
     def close(self):
-        self.db.commit();
-        self.db.close();
+        self.conn.commit();
+        self.conn.close();
 
 
     def getmaxid(self):
@@ -84,6 +88,9 @@ class Squid:
 
 
     def quicksearch(self, args):
+        args = self.log.argcheck(args, {
+           'sql' : {'require':True}
+        });
         q = "select * from %s where %s" % (self.table, args['sql']);
         self.query(q);
         return self.data;
@@ -92,21 +99,25 @@ class Squid:
     # Can insert one or more rows
     def insert(self, data=None):
         save = self.data;
-        if data: self.data = data;
-        if isinstance(self.data, dict):
+        if not data: data = self.data;
+        if isinstance(data, dict):
             sql = 'insert into '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in data))
             self.query(sql, data);
-        elif isinstance(self.data, list):
-             for d in self.data:
-                 sql = 'insert into '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in d))
-                 self.query(sql, d);
+        elif isinstance(data, list):
+             for d in data:
+                 if isinstance(d, dict):
+                    sql = 'insert into '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in d))
+                    self.query(sql, d);
         self.data = save;
 
 
     def update(self, data):
+        data = self.log.argcheck(data, {
+           'id' : {'require':True},
+        });
         save = self.data;
-        id = data.pop('id');
-        sql = 'update '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in data))
+        id   = data['id'];
+        sql  = 'update '+self.table+' set {}'.format(', '.join('{}=%s'.format(k) for k in data))
         sql += " where id='%s'" % id;
         self.query(sql, data);
         self.data = save;
@@ -123,14 +134,19 @@ class Squid:
 
 
     def singular(self, args):
-        if not 'data' in args:
-           args = { 'data' : args }
-        if len(args['data']) > 1: 
-           self.log.warn("Multiple results");
-        if len(args['data']) == 0:
-           self.log.warn("No result found");
-           return args;
-        args['data'] = args['data'][0];
+        if isinstance(args, dict):
+           if 'data' not in args:
+              args = {'data' : args};
+        elif isinstance(args, tuple):
+              args = {'data' : args[0]};
+        if isinstance(args['data'], list):
+           if args['data']:
+                 args['data'] = args['data'][0];
+           else: args['data'] = [];
+        elif isinstance(args['data'], tuple):
+           if args['data']:
+                 args['data'] = args['data'][0];
+           else: args['data'] = [];
         return args;
 
 
@@ -138,12 +154,13 @@ class Squid:
     def preprocess(self, args={}):
         if 'keys' in args and 'join' in self.form:
            for join in self.form['join']:
-               if 'type' in join and join ['type'] == "one":
+               if 'type' in join and join['type'] == "one":
                    if join['foreignkey'] in args['keys']:
                       index = args['keys'].index(join['foreignkey'])
                       args['keys'][index] = join['pseudonym'];
                       args['types'][join['pseudonym']] = 'varchar(256)'
         return args;
+
 
 
     # Finds foreign key by query and corrects pseudonyms
@@ -157,6 +174,7 @@ class Squid:
                if 'type' in join and join['type'] == "one":
                    if 'pseudonym' in join and join['pseudonym'] in args['keys']:
 
+                      # This means we took the raw id
                       if join['pseudonym'] not in args['data']:
                          raise smartlog.QuietException();
 
@@ -175,7 +193,7 @@ class Squid:
                           'types' : ['one'],
                         }
                       }));
-                      
+
                       if join['pseudonym'] in args['keys']:
                         i = args['keys'].index(join['pseudonym']);
                         args['keys'][i] = join['foreignkey']
@@ -201,16 +219,16 @@ class Squid:
 
         # Set SQL
         if 'sql' in args:
-            if args['sql'] != '':
-                  if "search" in self.form and "defaults" in self.form["search"]:
+            if "search" in self.form:
+               if args['sql'] != '' and 'defaults' in self.form['search']:
                       if True not in [x in args['sql'] for x in ['=', '>', '<']]:
                          args['sql'] = " or ".join(
                            ["%s='%s'" % (x, args['sql']) for x in self.form["search"]["defaults"]]
                          );
                       if "where" not in args['sql']:
                          args['sql'] = "where " + args['sql'];
-                      if "order" in self.form["search"]:
-                         args['sql'] = args['sql'] + " " + self.form["search"]["order"];
+               if "order" in self.form["search"] and "order" not in args['sql']:
+                  args['sql'] = args['sql'] + " " + self.form["search"]["order"];
         else: args['sql'] = "";
 
 
@@ -229,7 +247,9 @@ class Squid:
            
 
         # Update types
-        import re
+        if not self.fields:
+           self.describe();
+
         ttypes = self.fields;
         types = {};
         for index in range(len(self.form['join'])):
@@ -256,6 +276,7 @@ class Squid:
                    f = re.sub(r'.*\.', '', f);
                    ttypes[f] = types[f];
 
+
         self.fields = ttypes;
 
             
@@ -279,6 +300,7 @@ class Squid:
 
             # Set join conditions
             elif x['type'] == "many":
+
                if "many" in args['opts']['types'] and args['join_index'] == index:
                    for c in x['conditions']:
 
@@ -288,7 +310,6 @@ class Squid:
                            condition = c['condition'];
 
                        # Evaluate variable placeholders in conditions
-                       #self.log.print(args);
                        if 'variables' in c:
                           for v in c['variables']:
                               t.append(args['data'][v]);

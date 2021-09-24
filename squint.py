@@ -30,7 +30,7 @@ import toolbelt
 # notification window.  IPC would be better for that anyway.
 
 
-def validate(str):
+def argcheck(str):
     return str;
 
 def terminal_size():
@@ -870,7 +870,7 @@ class CmdWindow(InteractiveWindow):
     def read(self):
         self.draw();
         cmdpad = curses.textpad.Textbox(self.linewin);
-        x = cmdpad.edit(validate);
+        x = cmdpad.edit(argcheck);
         for i in range(0, len(x)):
           cmdpad.do_command(curses.KEY_BACKSPACE);
         #self.undraw();
