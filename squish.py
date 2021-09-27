@@ -82,7 +82,7 @@ class Squish(squirrel.squid.Squid):
                   args = args['form']['preprocessor'](args);
               ar = self.gatherdata(ar, sq);
               if 'midprocessor' in args['form']:
-                  args = args['form']['midprocessor'](args);
+                  ar = args['form']['midprocessor'](ar);
               for k in ar['data']:
                  if (k in ar['types'] and "datetime" == ar['types'][k]):
                      ar['data'][k] = quickdate(ar['data'][k]);
@@ -309,6 +309,8 @@ class Squish(squirrel.squid.Squid):
             args = self.purify(args);
             args['data']['id'] = searchargs['data']['id']
             self.update(args['data']);
+            if 'postprocessor' in args['form']:
+               args = args['form']['postprocessor'](args);
             args = self.log.argcheck(args, {
               'restore': ['keys', 'data', 'sql', 'opts', 'what'],
               'join'   : {'default': False},
@@ -493,9 +495,12 @@ class SquishInterpreter(toolbelt.interpreter.Interpreter):
             );
             import pandas;
             df = pandas.DataFrame(self.squids[t].data);
+            df.fillna("",inplace=True)
             for c in df.columns:
-                words += df[c].to_list();
-                pat = "|".join(words);
+                ws = df[c].to_list();
+                words += ws;
+                try:     pat = "|".join(ws);
+                except:  pat = '';
                 self.argspec += [{
                   'key'      : c,
                   'pattern'  : re.compile(pat),

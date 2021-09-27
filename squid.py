@@ -280,7 +280,12 @@ class Squid:
         self.fields = ttypes;
 
             
-        fs = args['what'].copy();
+        try:
+           fs = args['what'].copy();
+        except: 
+           raise smartlog.WarnException("Couldn't copy 'what'. No results?");
+           return args;
+
         for i in range(len(fs)):
             if '.' not in fs[i]:
                fs[i] = table + "." + fs[i];
