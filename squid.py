@@ -4,6 +4,7 @@ import smartlog
 import traceback
 import code
 import re
+format_ = format
 
 
 # Structured Query User Interface Delegator
@@ -16,7 +17,7 @@ class Squid:
     fields = None;
     log    = None;
     data   = {};
-    form   = {}
+    format = {}
 
 
     def __init__(self, config=None, table=''):
@@ -26,7 +27,7 @@ class Squid:
 
 
 
-    def describe(self, table=None):
+    def describe_table(self, table=None):
         if not table:
            table = self.table;
         cursor = self.connect()
@@ -151,9 +152,9 @@ class Squid:
 
 
     # Sets the pseudonyms for the keys prior to input
-    def preprocess(self, args={}):
-        if 'keys' in args and 'join' in self.form:
-           for join in self.form['join']:
+    def preprocessfk(self, args={}):
+        if 'keys' in args and 'join' in self.format:
+           for join in self.format['join']:
                if 'type' in join and join['type'] == "one":
                    if join['foreignkey'] in args['keys']:
                       index = args['keys'].index(join['foreignkey'])
@@ -164,13 +165,13 @@ class Squid:
 
 
     # Finds foreign key by query and corrects pseudonyms
-    def postprocess(self, args={}):
+    def postprocessfk(self, args={}):
 
         args['postkeys'] = [];
         args['postprocess_success'] = True;
 
-        if 'keys' in args and 'join' in self.form:
-           for join in self.form['join']:
+        if 'keys' in args and 'join' in self.format:
+           for join in self.format['join']:
                if 'type' in join and join['type'] == "one":
                    if 'pseudonym' in join and join['pseudonym'] in args['keys']:
 
@@ -219,16 +220,23 @@ class Squid:
 
         # Set SQL
         if 'sql' in args:
-            if "search" in self.form:
-               if args['sql'] != '' and 'defaults' in self.form['search']:
-                      if True not in [x in args['sql'] for x in ['=', '>', '<']]:
+            if "search" in self.format:
+               args['sql'] = args['sql'].strip();
+               if args['sql'] and 'defaults' in self.format['search']:
+                      if (True not in [x in args['sql'] for x in ['=', '>', '<']]
+                          and (not 'order' in args['sql'] or 'where' in args['sql'])):
                          args['sql'] = " or ".join(
-                           ["%s='%s'" % (x, args['sql']) for x in self.form["search"]["defaults"]]
+                           ["%s='%s'" % (x, args['sql']) for x in self.format["search"]["defaults"]]
                          );
-                      if "where" not in args['sql']:
+                      args['sql'] = args['sql'].strip();
+                      if "where" not in args['sql'] and not args['sql'].startswith('order'):
                          args['sql'] = "where " + args['sql'];
-               if "order" in self.form["search"] and "order" not in args['sql']:
-                  args['sql'] = args['sql'] + " " + self.form["search"]["order"];
+               if 'order' not in args['sql']:
+                  if 'cmd' in args:
+                     if 'order' in self.format[args['cmd']]:
+                          args['sql'] = args['sql'] + " " + self.format[args['cmd']]["order"];
+                     elif "order" in self.format["search"]:
+                          args['sql'] = args['sql'] + " " + self.format["search"]["order"];
         else: args['sql'] = "";
 
 
@@ -239,7 +247,7 @@ class Squid:
 
 
         # If no join data, use simple query
-        if not 'join' in self.form: 
+        if not 'join' in self.format: 
            args['data'] = self.query(
              "select %s from %s %s" % ("*", table, args['sql'])
            );
@@ -248,19 +256,19 @@ class Squid:
 
         # Update types
         if not self.fields:
-           self.describe();
+           self.describe_table();
 
         ttypes = self.fields;
         types = {};
-        for index in range(len(self.form['join'])):
-            join = self.form['join'][index];
+        for index in range(len(self.format['join'])):
+            join = self.format['join'][index];
             if join['type'] in args['opts']['types']:
 
                what = [];
 
                # Describe that table, add its fields
                if join['type'] == "one":
-                    types = self.describe(join['table']);
+                    types = self.describe_table(join['table']);
                     what  = join['fields'];
 
                # Get descriptors for all tables
@@ -269,7 +277,7 @@ class Squid:
                     what = join[args['opts']['command']]['fields'];
                     args['what'] = join[args['opts']['command']]['fields'];
                     for c in join['conditions']:
-                        types.update(self.describe(c['table']));
+                        types.update(self.describe_table(c['table']));
 
                # Trim the table name and dot
                for f in what:
@@ -292,9 +300,9 @@ class Squid:
 
 
         cs = []; # conditions
-        for index in range(len(self.form['join'])):
+        for index in range(len(self.format['join'])):
 
-            x = self.form['join'][index];
+            x = self.format['join'][index];
 
             # Just equate keys
             if x['type'] == "one":
@@ -330,7 +338,7 @@ class Squid:
                              cs.append("inner join %s on %s" %  (c['table'], condition));
                        else: cs.append("inner join %s " %  (c['table']));
 
-                   if args['sql'] != '': 
+                   if not args['sql'].startswith("order") and args['sql'] != '': 
                       args['sql']  = " where " + args['sql'];
                    if 'order' in x[args['opts']['command']]:
                       args['sql'] += " " + x[args['opts']['command']]['order'] + " ";

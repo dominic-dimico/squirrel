@@ -7,6 +7,7 @@ import smartlog
 import code
 import copy;
 import toolbelt
+format_ = format
 
 quickdate = toolbelt.quickdate.quickdate;
 _list = list
@@ -27,9 +28,11 @@ class Squish(squirrel.squid.Squid):
             "postprocess_success" : {'overwrite': False}
         });
         while not args["postprocess_success"]:
-            args = s.preprocess(args);
+            args = s.preprocessfk(args);
             args = self.log.gather(args)
-            args = s.postprocess(args);
+            self.log.info('after gather');
+            args = s.postprocessfk(args);
+            self.log.info('after postprocfk');
             for key in args["postkeys"]:
                 self.log.warn("%s not found" % key)
                 if self.log.yesno("create"):
@@ -39,6 +42,7 @@ class Squish(squirrel.squid.Squid):
                      'data': { 'cmd':'new',
                                'obj': key,
                    }}));
+            self.log.info('before return');
         return self.log.argcheck(args, {
             'delete' : ["postprocess_success", "postkeys"]
         });
@@ -53,9 +57,9 @@ class Squish(squirrel.squid.Squid):
         else: return table;
 
 
-    def check_condition(self, args, form):
-        if not 'condition' in form: return True;
-        condition = form['condition'].split('=');
+    def check_condition(self, args, format):
+        if not 'condition' in format: return True;
+        condition = format['condition'].split('=');
         v1 = condition[0];
         v2 = condition[1];
         if v2 in args['data']:
@@ -64,47 +68,48 @@ class Squish(squirrel.squid.Squid):
 
 
 
-    def create_with_form(self, args, form):
-       if not self.check_condition(args, form):
+    def create_with_format(self, args, format):
+       if not self.check_condition(args, format):
           return args;
-       ar   = self.load_form(args, form);
-       ar   = self.load_presets(ar, form);
+       ar   = self.load_format(args, format);
+       ar   = self.load_presets(ar, format);
        sq   = self.db.squids[ar['alias']];
        ar   = self.log.argcheck(ar, { # Prep to gather data
            'overwrite'  : {'overwrite' : True},
        });
        number = 1;
-       if 'number' in form:
-           number = form['number']; 
+       if 'number' in format:
+           number = format['number']; 
        while number != 0:
            try:
-              if 'preprocessor' in args['form']:
-                  args = args['form']['preprocessor'](args);
+              if 'preprocessor' in args['format']:
+                  ar = args['format']['preprocessor'](ar);
               ar = self.gatherdata(ar, sq);
-              if 'midprocessor' in args['form']:
-                  ar = args['form']['midprocessor'](ar);
+              if 'midprocessor' in args['format']:
+                  ar = args['format']['midprocessor'](ar);
               for k in ar['data']:
                  if (k in ar['types'] and "datetime" == ar['types'][k]):
                      ar['data'][k] = quickdate(ar['data'][k]);
               sq.insert(ar['data']);
-              if 'postprocessor' in args['form']:
-                 args = args['form']['postprocessor'](args);
+              if 'postprocessor' in args['format']:
+                 self.log.info("calling postprocessor");
+                 ar = args['format']['postprocessor'](ar);
               if number>0:
                  number = number - 1;
-           except smartlog.QuietException:
-              break;
+           except Exception as e:
+              print(e);
        return args;
 
 
 
     def join_new(self, args):
-        if not 'join' in self.form:
+        if not 'join' in self.format:
            return args;
-        for join in self.form['join']:
+        for join in self.format['join']:
             if 'new' in join:
-               form = join['new'];
-               self.create_with_form(args, form);
-        args['form'] = self.form;
+               format = join['new'];
+               self.create_with_format(args, format);
+        args['format'] = self.format;
         return args;
 
 
@@ -112,36 +117,36 @@ class Squish(squirrel.squid.Squid):
 
     def create(self, args={'return': False}):
         args = self.log.argcheck(args, {
-          'form' : {'default' : self.form['new']}, 
+          'format' : {'default' : self.format['new']}, 
           'opts' : {'default' : {}},
         });
         args = self.log.argcheck(args, {
-          'keys' : {'default' : args['form']['fields']},
-          'what' : {'default' : args['form']['fields']},
+          'keys' : {'default' : args['format']['fields']},
+          'what' : {'default' : args['format']['fields']},
         });
         args['opts'] = self.log.argcheck(args['opts'], {
           'types'   : {'default'   : ["one"]},
           'command' : {'overwrite' :  'new' },
         });
-        if 'prepreprocessor' in args['form']:
-            args = args['form']['prepreprocessor'](args);
-        args = self.create_with_form(args, args['form']);
+        if 'prepreprocessor' in args['format']:
+            args = args['format']['prepreprocessor'](args);
+        args = self.create_with_format(args, args['format']);
         if 'data' not in args: args['data'] = {};
         args['data']['id'] = self.getmaxid();
         args = self.join_new(args);
-        if 'postpostprocessor' in args['form']:
-            args = args['form']['postpostprocessor'](args);
+        if 'postpostprocessor' in args['format']:
+            args = args['format']['postpostprocessor'](args);
         if 'return' in args and not args['return']: 
             self.log.argcheck(args, {
-              'delete' : ['keys', 'data', 'sql', 'opts', 'what', 'form'],
+              'delete' : ['keys', 'data', 'sql', 'opts', 'what', 'format'],
             });
             return;
         return args;
 
 
 
-    def squish_describe(self, args):
-        self.log.logdata({'data': self.describe()}); 
+    def describe(self, args):
+        self.log.logdata({'data': self.describe_table()}); 
 
 
     def search(self, args):
@@ -166,22 +171,22 @@ class Squish(squirrel.squid.Squid):
 
 
     def list(self, args={'return':False}):
-        if not 'form' in args:
+        if not 'format' in args:
            args = self.log.argcheck(args, {
-              'form' : {'default' : self.form['list']},
+              'format' : {'default' : self.format['list']},
               'sql'  : {'default' : '', 'gather': 'always'},
            });
         self.log.print(args);
         args = self.log.argcheck(args, {
             'backup' : ['opts', 'what'],
             'opts'   : {'overwrite' : {"types":["one"], "command":"view"}},
-            'what'   : {'default' : args['form']['fields']},
+            'what'   : {'default' : args['format']['fields']},
         });
         args = self.fullsearchquery(args);
         args = self.listdata(args);
         if 'return' in args and not args['return']: 
             self.log.argcheck(args, {
-              'delete' : ['keys', 'data', 'sql', 'opts', 'what', 'form'],
+              'delete' : ['keys', 'data', 'sql', 'opts', 'what', 'format'],
             });
             return;
         return self.log.argcheck(args, {
@@ -201,8 +206,8 @@ class Squish(squirrel.squid.Squid):
            'clear'  : ['sql'],
            'opts'   : {'overwrite':  {'types':['many'],'command':'view'},},
         });
-        for index in range(len(self.form['join'])):
-            join = self.form['join'][index];
+        for index in range(len(self.format['join'])):
+            join = self.format['join'][index];
             if join['type'] == "many":
                args['join_index'] = index;
                args = self.fullsearchquery(args);
@@ -212,12 +217,12 @@ class Squish(squirrel.squid.Squid):
 
     def view(self, args={'return': False}):
         args = self.log.argcheck(args, {
-            'form' : {'default' : self.form['view']},
+            'format' : {'default' : self.format['view']},
         });
         #self.log.print(args);
         args = self.log.argcheck(args, {
-            'keys' : {'default': args['form']['fields']},
-            'what' : {'default': args['form']['fields']},
+            'keys' : {'default': args['format']['fields']},
+            'what' : {'default': args['format']['fields']},
             'join' : {'default': True},
             'sql'  : {'require': True, 'gather': 'maybe'},
             'opts' : {'default': {'types': ['one'], 'command': 'view'}},
@@ -233,7 +238,7 @@ class Squish(squirrel.squid.Squid):
         else:  self.log.warn("Not found");
         if 'return' in args and not args['return']:
             self.log.argcheck(args, {
-              'delete' : ['keys', 'data', 'sql', 'opts', 'what', 'form'],
+              'delete' : ['keys', 'data', 'sql', 'opts', 'what', 'format'],
             });
             return;
         return self.log.argcheck(args, {
@@ -244,10 +249,10 @@ class Squish(squirrel.squid.Squid):
     def deleter(self, args={'return': False}):
         args = self.log.argcheck(args, {
            'data' : {'overwrite' : self.quicksearch(args)},
-           'form' : {'overwrite' : self.form['list']},
+           'format' : {'overwrite' : self.format['list']},
            'sql'  : {'require'   : True},
         });
-        args = self.load_form(args, args['form']);
+        args = self.load_format(args, args['format']);
         args = self.purify(args);
         args = self.listdata(args);
         if self.log.yesno("Really remove"):
@@ -255,7 +260,7 @@ class Squish(squirrel.squid.Squid):
            self.query(q);
         if 'return' in args and not args['return']: 
             self.log.argcheck(args, {
-              'delete' : ['keys', 'data', 'sql', 'opts', 'what', 'form'],
+              'delete' : ['keys', 'data', 'sql', 'opts', 'what', 'format'],
             });
             return;
         return args;
@@ -284,69 +289,102 @@ class Squish(squirrel.squid.Squid):
         });
 
 
+
+    def __edit_keys(self, args):
+        if 'argspec' not in args: return;
+        # We don't have to dropna
+        df = args['argspec'].dropna(subset=['data']);
+        for i in range(len(df)):
+          if df.loc[i, 'key'] == 'field':
+             if df.loc[i, 'data'] and df.loc[i, 'object']:
+                if df.loc[i, 'object'] == args['obj']:
+                   df.loc[i, 'data'];
+        
+
+
     def edit(self, args={'return': False}):
         args = self.log.argcheck(args, {
-            'form' : {'default' : self.form['edit']}
+            'format' : {'default' : self.format['edit']}
         });
         args = self.log.argcheck(args, {
-            'keys' : {'default': args['form']['fields']},
-            'what' : {'default': args['form']['fields']},
+            'keys' : {'default': args['format']['fields']},
+            'what' : {'default': args['format']['fields']},
             'join' : {'default': False},
             'sql'  : {'require': True, 'gather': 'maybe'},
         });
-        self.log.copyback(args, ['keys'], self.view);
+        self.log.copyback(args, ['keys'], self.list);
+        if len(args['data'])==1:
+           self.log.logdata({'data':args['data'][0]})
         if args['data'] and self.log.yesno("Edit?"):
-            searchargs = copy.copy(args);
-            searchargs = self.searchsingle(
-                self.log.argcheck(searchargs, {
-                     'keys' : {'overwrite': ['id']}
-                })
-            );
-            args = self.log.argcheck(args, {
-              'backup': ['keys', 'data', 'sql', 'opts', 'what'],
-            });
-            args = self.gatherdata(args);
-            args = self.purify(args);
-            args['data']['id'] = searchargs['data']['id']
-            self.update(args['data']);
-            if 'postprocessor' in args['form']:
-               args = args['form']['postprocessor'](args);
-            args = self.log.argcheck(args, {
-              'restore': ['keys', 'data', 'sql', 'opts', 'what'],
-              'join'   : {'default': False},
-            });
-            self.view(args);
+            try:
+                searchargs = copy.copy(args);
+                searchargs = self.fullsearchquery(
+                    self.log.argcheck(searchargs, {
+                         'keys' : {'overwrite': ['id']},
+                         'what' : {'overwrite': ['id']}
+                    })
+                );
+                print(searchargs);
+                args = self.log.argcheck(args, {
+                  'backup': ['keys', 'data', 'sql', 'opts', 'what'],
+                });
+                #args = self.gatherdata(args);
+                if len(args['data']) == 1:
+                    xs = self.log.selector(args['data'][0]);
+                    data = [xs.edit()]; 
+                else:
+                    xs = self.log.xselector(args['data']);
+                    data = list(xs.edit());
+                for i in range(len(data)):
+                      sargs = self.purify({
+                           'keys' : args['keys'],
+                           'data' : data[i], 
+                      });
+                      sargs['data']['id'] = searchargs['data'][i]['id'];
+                      self.update(sargs['data']);
+                      if 'postprocessor' in args['format']:
+                         args = args['format']['postprocessor'](args);
+                args = self.log.argcheck(args, {
+                  'restore': ['keys', 'data', 'sql', 'opts', 'what'],
+                  'join'   : {'default': False},
+                });
+                self.list(args);
+                if len(args['data'])==1:
+                   self.log.logdata({'data':args['data'][0]})
+            except Exception as e:
+               import traceback; 
+               traceback.print_exc();
         if 'return' in args and not args['return']: 
             self.log.argcheck(args, {
-              'delete' : ['keys', 'data', 'sql', 'opts', 'what', 'form'],
+              'delete' : ['keys', 'data', 'sql', 'opts', 'what', 'format'],
             });
             return;
         return args;
 
 
-    def load_form(self, args, form):
-        form = self.log.argcheck(form,{
+    def load_format(self, args, format):
+        format = self.log.argcheck(format,{
             'table'  : {'default':self.table},
             'fields' : {'require':True},
         });
-        alias = self.alias_of(form['table']);
+        alias = self.alias_of(format['table']);
         return self.log.argcheck(args, {
-           'table' : {'overwrite': form['table']},
-           'keys'  : {'overwrite': form['fields']},
-           'types' : {'overwrite': self.db.squids[alias].describe()},
+           'table' : {'overwrite': format['table']},
+           'keys'  : {'overwrite': format['fields']},
+           'types' : {'overwrite': self.db.squids[alias].describe_table()},
            'alias' : {'overwrite': alias},
         });
 
 
-    def load_presets(self, args, form):
+    def load_presets(self, args, format):
         new_data = {};
-        if 'preset' in form:
+        if 'preset' in format:
             args = self.log.argcheck(args, {
                'data'      : {'default': {}}, 
                'overwrite' : {'default': False},
                'dates'     : {'default': False},
             });
-            preset = form["preset"];
+            preset = format["preset"];
             for k in preset:
                 if preset[k] in args['data']: 
                       new_data[k] = args['data'][preset[k]];
@@ -476,7 +514,7 @@ class SquishInterpreter(toolbelt.interpreter.Interpreter):
         # All field names of all tables
         words = [];
         for alias in objects:
-            ts      = self.squids[alias].describe();
+            ts      = self.squids[alias].describe_table();
             words   = ts.keys();
             pattern = "|".join(words);
             self.auto.words += list(set(words)-set(self.auto.words));
@@ -524,7 +562,7 @@ class SquishInterpreter(toolbelt.interpreter.Interpreter):
         return self.squid.list(args);
 
     def describe(self, args):
-        return self.squid.squish_describe(args);
+        return self.squid.describe(args);
 
     def deleter(self, args):
         return self.squid.deleter(args);
@@ -540,22 +578,19 @@ class SquishInterpreter(toolbelt.interpreter.Interpreter):
         if args['obj'] not in self.squids:
            raise smartlog.AlertException('not a valid object');
         self.squid = self.squids[args['obj']];
-        form = None;
-        if args['cmd'] in self.squid.form:
-           form = self.squid.form[args['cmd']];
-           args = self.squid.load_form(args, form);
-           args = self.squid.load_presets(args, form);
+        format = None;
+        if args['cmd'] in self.squid.format:
+           format = self.squid.format[args['cmd']];
+           args = self.squid.load_format(args, format);
+           args = self.squid.load_presets(args, format);
         if not 'sql' in args: args['sql']='';
         return self.log.argcheck(args, {
            'clear'   : ['data'],
            'sql'     : {'default'   : args['sql']+" ".join(args['xs']).rstrip().lstrip()},
            'opts'    : {'overwrite' : {'command':args['cmd'],'types':['one']}},
            'squids'  : {'default'   : self.squids},
-           'form'    : {'overwrite' : form},
+           'format'    : {'overwrite' : format},
            'cli'     : {'overwrite' : self},
         });
 
-
-    def postprocess(self, args):
-        return args;
 

@@ -6,6 +6,7 @@ import MySQLdb
 import configparser
 import code
 import getopt
+format_ = format
 
 from pprint import pprint as pp
 
@@ -61,7 +62,7 @@ log = smartlog.Smartlog();
       for table in database["tables"]:
           print("class %s(squirrel.squid.Squid):" % table.capitalize());
           for el in ['list', 'view', 'join']:
-              print("  %s_form = [];" % (el));
+              print("  %s_format = [];" % (el));
           print("  def __init__(self, config, table):");
           print("    super().__init__(config, table);\n\n");
   
@@ -136,11 +137,11 @@ def create(s):
 
 
 def fullsearchquery(s, q):
-    if not s.form['join']:
+    if not s.format['join']:
        return "select %s from %s where %s" % ("*", s.table, q)
     fs = []; # fields
     cs = []; # conditions
-    for x in s.form['join']:
+    for x in s.format['join']:
         fs = fs + [x['table'] + "." + y for y in x['fields']]
         cs.append("inner join %s on %s" % (x['table'], s.table + '.' + x['foreignkey'] + '=' + x['table'] + '.' + x['primarykey']));
     sql = "select %s from %s %s where %s" % (", ".join(fs), s.table, " ".join(cs), q);
@@ -166,7 +167,7 @@ def listing(s, q=None):
     d = search(s, q);
     d = list(d);
     ks = s.describe();
-    log.tabulate(s.form['list'], d);
+    log.tabulate(s.format['list'], d);
     pass
 
 
