@@ -329,11 +329,12 @@ class Squish(squirrel.squid.Squid):
                   'backup': ['keys', 'data', 'sql', 'opts', 'what'],
                 });
                 #args = self.gatherdata(args);
+                from smartlog.selector import DataSelector
                 if len(args['data']) == 1:
-                    xs = self.log.selector(args['data'][0]);
+                    xs = DataSelector(args['data'][0]);
                     data = [xs.edit()]; 
                 else:
-                    xs = self.log.xselector(args['data']);
+                    xs = DataSelector(args['data']);
                     data = list(xs.edit());
                 for i in range(len(data)):
                       sargs = self.purify({
@@ -343,7 +344,7 @@ class Squish(squirrel.squid.Squid):
                       sargs['data']['id'] = searchargs['data'][i]['id'];
                       self.update(sargs['data']);
                       if 'postprocessor' in args['format']:
-                         args = args['format']['postprocessor'](args);
+                         sargs = args['format']['postprocessor'](sargs);
                 args = self.log.argcheck(args, {
                   'restore': ['keys', 'data', 'sql', 'opts', 'what'],
                   'join'   : {'default': False},
