@@ -2,13 +2,14 @@ import configparser
 import MySQLdb
 import smartlog
 import traceback
+import toolbelt
 import code
 import re
 format_ = format
 
 
 # Structured Query User Interface Delegator
-class Squid:
+class Squid(toolbelt.dataserver.DataServer):
 
 
     conn   = None;
@@ -219,24 +220,27 @@ class Squid:
 
 
         # Set SQL
+        ords = []; # orderings  
         if 'sql' in args:
             if "search" in self.format:
                args['sql'] = args['sql'].strip();
-               if args['sql'] and 'defaults' in self.format['search']:
+               if args['sql'] and 'fields' in self.format['search']:
                       if (True not in [x in args['sql'] for x in ['=', '>', '<']]
                           and (not 'order' in args['sql'] or 'where' in args['sql'])):
                          args['sql'] = " or ".join(
-                           ["%s='%s'" % (x, args['sql']) for x in self.format["search"]["defaults"]]
+                           ["%s='%s'" % (x, args['sql']) for x in self.format["search"]["fields"]]
                          );
                       args['sql'] = args['sql'].strip();
                       if "where" not in args['sql'] and not args['sql'].startswith('order'):
                          args['sql'] = "where " + args['sql'];
+
                if 'order' not in args['sql']:
                   if 'cmd' in args:
                      if 'order' in self.format[args['cmd']]:
-                          args['sql'] = args['sql'] + " " + self.format[args['cmd']]["order"];
+                          args['sql'] = args['sql'] + " " + self.format[args['cmd']]["order"] + " ";
                      elif "order" in self.format["search"]:
-                          args['sql'] = args['sql'] + " " + self.format["search"]["order"];
+                          args['sql'] = args['sql'] + " " + self.format["search"]["order"] + " ";
+
         else: args['sql'] = "";
 
 
@@ -300,6 +304,7 @@ class Squid:
 
 
         cs = []; # conditions
+        lims = []; # orderings  
         for index in range(len(self.format['join'])):
 
             x = self.format['join'][index];
@@ -307,9 +312,15 @@ class Squid:
             # Just equate keys
             if x['type'] == "one":
                if "one" in args['opts']['types']:
-                   cs.append("inner join %s on %s" % 
-                      ( x['table'],     table   + '.' + x['foreignkey'] + '=' 
-                      +              x['table'] + '.' + x['primarykey']));
+                   if 'alias' in x: 
+                      ali = x['alias'];
+                      tab = x['alias'];
+                   else:            
+                      ali = "";
+                      tab = x['table'];
+                   cs.append("inner join %s %s on %s" % 
+                      (x['table'], ali, table   + '.' + x['foreignkey'] + '=' 
+                      +                 tab     + '.' + x['primarykey']));
 
             # Set join conditions
             elif x['type'] == "many":
@@ -330,26 +341,32 @@ class Squid:
 
                        # If condition takes a variable, add a where clause
                        if 'type' in c and c['type'] == 'where':
-                          args['sql'] += condition;
+                          args['sql'] = condition + " " + args['sql'];
                           condition = '';
                        
+                       if 'alias' in c:
+                             tabstr = "inner join %s %s" % (c['table'], c['alias']);
+                       else: tabstr = "inner join %s " % (c['table']);
+
                        # Set up join condition
                        if condition != '':
-                             cs.append("inner join %s on %s" %  (c['table'], condition));
-                       else: cs.append("inner join %s " %  (c['table']));
+                             tabstr += " on %s" %  (condition);
+                       cs.append(tabstr);
 
-                   if not args['sql'].startswith("order") and args['sql'] != '': 
+                   args['sql'] = args['sql'].strip();
+                   if args['sql'] != '': 
                       args['sql']  = " where " + args['sql'];
+
                    if 'order' in x[args['opts']['command']]:
-                      args['sql'] += " " + x[args['opts']['command']]['order'] + " ";
+                       ords.append(x[args['opts']['command']]['order']);
 
                    if 'number' in x[args['opts']['command']]: 
                       if x[args['opts']['command']]['number'] > 0:
-                         args['sql'] += " limit %s " % x[args['opts']['command']]['number'];
+                         lims.append(" limit %s " % x[args['opts']['command']]['number']);
 
 
-        sql = "select %s from %s %s %s" % (
-              ", ".join(fs), table, " ".join(cs), args['sql']);
+        sql = "select %s from %s %s %s %s %s" % (
+              ", ".join(fs), table, " ".join(cs), args['sql'], " ".join(ords), " ".join(lims));
 
 
         args['data'] = self.query(sql);

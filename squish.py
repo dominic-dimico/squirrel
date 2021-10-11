@@ -176,14 +176,17 @@ class Squish(squirrel.squid.Squid):
               'format' : {'default' : self.format['list']},
               'sql'  : {'default' : '', 'gather': 'always'},
            });
-        self.log.print(args);
         args = self.log.argcheck(args, {
             'backup' : ['opts', 'what'],
             'opts'   : {'overwrite' : {"types":["one"], "command":"view"}},
             'what'   : {'default' : args['format']['fields']},
         });
         args = self.fullsearchquery(args);
+        if 'preprocessor' in args['format']:
+            args = args['format']['preprocessor'](args);
         args = self.listdata(args);
+        if 'postprocessor' in args['format']:
+            args = args['format']['postprocessor'](args);
         if 'return' in args and not args['return']: 
             self.log.argcheck(args, {
               'delete' : ['keys', 'data', 'sql', 'opts', 'what', 'format'],
@@ -219,7 +222,6 @@ class Squish(squirrel.squid.Squid):
         args = self.log.argcheck(args, {
             'format' : {'default' : self.format['view']},
         });
-        #self.log.print(args);
         args = self.log.argcheck(args, {
             'keys' : {'default': args['format']['fields']},
             'what' : {'default': args['format']['fields']},
@@ -312,7 +314,11 @@ class Squish(squirrel.squid.Squid):
             'join' : {'default': False},
             'sql'  : {'require': True, 'gather': 'maybe'},
         });
+        ret = True;
+        if 'return' in args:
+            ret = args['return'];
         self.log.copyback(args, ['keys'], self.list);
+        args['return'] = ret;
         if len(args['data'])==1:
            self.log.logdata({'data':args['data'][0]})
         if args['data'] and self.log.yesno("Edit?"):
@@ -324,14 +330,13 @@ class Squish(squirrel.squid.Squid):
                          'what' : {'overwrite': ['id']}
                     })
                 );
-                print(searchargs);
+                searchargs['data'] = list(searchargs['data']);
                 args = self.log.argcheck(args, {
                   'backup': ['keys', 'data', 'sql', 'opts', 'what'],
                 });
-                #args = self.gatherdata(args);
-                from smartlog.selector import DataSelector
+                from smartlog.selector import DataSelector, Selector
                 if len(args['data']) == 1:
-                    xs = DataSelector(args['data'][0]);
+                    xs   = Selector(args['data'][0]);
                     data = [xs.edit()]; 
                 else:
                     xs = DataSelector(args['data']);
@@ -341,6 +346,9 @@ class Squish(squirrel.squid.Squid):
                            'keys' : args['keys'],
                            'data' : data[i], 
                       });
+                      if isinstance(sargs['data'], list):
+                         sargs['data'] = sargs['data'][0];
+                      #print(sargs['data'], searchargs['data']);
                       sargs['data']['id'] = searchargs['data'][i]['id'];
                       self.update(sargs['data']);
                       if 'postprocessor' in args['format']:
@@ -513,11 +521,12 @@ class SquishInterpreter(toolbelt.interpreter.Interpreter):
 
 
         # All field names of all tables
+
         words = [];
         for alias in objects:
             ts      = self.squids[alias].describe_table();
             words   = ts.keys();
-            pattern = "|".join(words);
+            pattern = "^" + "|".join(words) + "$";
             self.auto.words += list(set(words)-set(self.auto.words));
             self.argspec    += [{
               'key'      : 'field',
@@ -575,7 +584,8 @@ class SquishInterpreter(toolbelt.interpreter.Interpreter):
     def preprocess(self, args):
         for k in args['data']: 
             args[k] = args['data'][k];
-        if not 'obj' in args: return args;
+        if not 'obj' in args: 
+           return args;
         if args['obj'] not in self.squids:
            raise smartlog.AlertException('not a valid object');
         self.squid = self.squids[args['obj']];
